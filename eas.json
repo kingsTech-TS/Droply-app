@@ -1,0 +1,41 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://droply-bd.onrender.com/api/v1",
+        "EXPO_PUBLIC_WS_URL": "wss://droply-bd.onrender.com/ws/v1",
+        "EXPO_PUBLIC_WS_ORIGIN": "droply-app://mobile",
+        "EXPO_PUBLIC_DEBUG": "true",
+        "EXPO_PUBLIC_ENABLE_BENCHMARK": "true"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://droply-bd.onrender.com/api/v1",
+        "EXPO_PUBLIC_WS_URL": "wss://droply-bd.onrender.com/ws/v1",
+        "EXPO_PUBLIC_WS_ORIGIN": "droply-app://mobile"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://droply-bd.onrender.com/api/v1",
+        "EXPO_PUBLIC_WS_URL": "wss://droply-bd.onrender.com/ws/v1",
+        "EXPO_PUBLIC_WS_ORIGIN": "droply-app://mobile"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

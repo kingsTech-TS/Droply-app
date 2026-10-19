@@ -1,25 +1,150 @@
 {
   "expo": {
-    "name": "MyMobileApp",
-    "slug": "MyMobileApp",
+    "name": "Droply",
+    "slug": "droply",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "scheme": "droply",
+    "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#F7F8FC",
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "app.droply.mobile",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Droply connects directly to devices on your network to send files faster.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bitcode": false
     },
     "android": {
+      "package": "app.droply.mobile",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#4F46E5",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": true,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.BLUETOOTH",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.BLUETOOTH",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    }
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 140,
+          "backgroundColor": "#F7F8FC",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0E1020"
+          }
+        }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Droply uses the camera to scan room QR codes.",
+          "microphonePermission": "Droply never records audio. This permission is required by the WebRTC library but is not used."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Droply uses the camera to scan room QR codes.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Droply lets you pick photos and videos to send.",
+          "cameraPermission": "Droply uses the camera to scan room QR codes.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Droply saves photos and videos you receive to your library when you ask it to.",
+          "savePhotosPermission": "Droply saves photos and videos you receive to your library when you ask it to.",
+          "isAccessMediaLocationEnabled": false,
+          "granularPermissions": [
+            "photo",
+            "video"
+          ]
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#4F46E5"
+        }
+      ],
+      "expo-secure-store",
+      "expo-sqlite",
+      "expo-sharing",
+      "expo-image",
+      "expo-video",
+      "expo-asset",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "# react-native-webrtc: WebRTC's native library calls these Java classes by name from C++\n# (JNI), which R8 can't see, so they must not be removed or renamed. These are all the\n# packages in its libwebrtc.jar:\n#  - org.webrtc.**   the WebRTC Java API\n#  - org.jni_zero.** + J.** (J.N) the JNI glue loaded at startup (missing → crash on launch)\n# Its optional AV1 decoder (Dav1dDecoder) is referenced but not bundled, hence -dontwarn.\n-keep class org.webrtc.** { *; }\n-keep class org.jni_zero.** { *; }\n-keep class J.** { *; }\n-dontwarn org.webrtc.**\n-dontwarn org.jni_zero.**"
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "14493774-69a4-41cb-84f4-5d7232a9bf0f"
+      }
+    },
+    "platforms": [
+      "ios",
+      "android"
+    ]
   }
 }
