@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { configureNotifications } from "@/lib/notifications/notifications";
 import { wireQueryManagers } from "@/lib/query";
 import { ThemeProvider, useTheme } from "@/theme/theme-provider";
+import { Intro } from "@/components/brand/intro";
 import { EffectsOverlay } from "@/components/motion/effects-overlay";
 import { ResultCardHost } from "@/components/share/result-card";
 import { SessionEffects } from "@/components/session-effects";
@@ -53,6 +54,7 @@ function RootStack() {
       <Toaster />
       <ResultCardHost />
       <ConfirmHost />
+      <Intro />
     </>
   );
 }
