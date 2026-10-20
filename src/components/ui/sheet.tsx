@@ -3,16 +3,20 @@
 // capped at 92% of the screen with scrollable content.
 import type { LucideIcon } from "lucide-react-native";
 import { X } from "lucide-react-native";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { Store } from "@/lib/utils/emitter";
 import { useTheme } from "@/theme/theme-provider";
 import { radius, space, springs } from "@/theme/tokens";
 import { IconButton } from "./icon-button";
 import { Text } from "./text";
+
+/** Sheets playing their close animation (confirm dialogs wait for them, see confirm.tsx). */
+export const sheetsClosing = new Store(0);
 
 export interface SheetProps {
   visible: boolean;
@@ -37,8 +41,22 @@ export function Sheet({ visible, onClose, title, subtitle, icon: Icon, children,
   const translate = useSharedValue(screenHeight);
   const backdrop = useSharedValue(0);
 
+  // Counted in `sheetsClosing` from the start of the close animation until it unmounts.
+  const closing = useRef(false);
+  const endClosing = () => {
+    if (!closing.current) return;
+    closing.current = false;
+    sheetsClosing.update((n) => Math.max(0, n - 1));
+  };
+  const finishClose = () => {
+    setMounted(false);
+    endClosing();
+  };
+  useEffect(() => endClosing, []);
+
   useEffect(() => {
     if (visible) {
+      endClosing();
       // Mount before animating in; unmounting waits for the close animation.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMounted(true);
@@ -46,9 +64,13 @@ export function Sheet({ visible, onClose, title, subtitle, icon: Icon, children,
       translate.value = reduced ? withTiming(0, { duration: 150 }) : withSpring(0, springs.gentle);
       backdrop.value = withTiming(1, { duration: 220 });
     } else if (mounted) {
+      if (!closing.current) {
+        closing.current = true;
+        sheetsClosing.update((n) => n + 1);
+      }
       backdrop.value = withTiming(0, { duration: 180 });
       translate.value = withTiming(screenHeight, { duration: 220, easing: Easing.in(Easing.cubic) }, (finished) => {
-        if (finished) runOnJS(setMounted)(false);
+        if (finished) runOnJS(finishClose)();
       });
     }
     // `mounted` intentionally omitted: it only gates the close animation.

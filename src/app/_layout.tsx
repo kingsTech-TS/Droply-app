@@ -10,6 +10,7 @@ import { ThemeProvider, useTheme } from "@/theme/theme-provider";
 import { EffectsOverlay } from "@/components/motion/effects-overlay";
 import { ResultCardHost } from "@/components/share/result-card";
 import { SessionEffects } from "@/components/session-effects";
+import { ConfirmHost } from "@/components/ui/confirm";
 import { Toaster } from "@/components/ui/toast";
 
 export { ErrorBoundary } from "@/components/error-boundary";
@@ -51,6 +52,7 @@ function RootStack() {
       <EffectsOverlay />
       <Toaster />
       <ResultCardHost />
+      <ConfirmHost />
     </>
   );
 }

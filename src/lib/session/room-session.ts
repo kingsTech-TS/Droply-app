@@ -5,11 +5,12 @@ import NetInfo from "@react-native-community/netinfo";
 import { AppState, type AppStateStatus } from "react-native";
 import { env } from "@/config/env";
 import { leaveRoom } from "@/lib/api/devices";
-import { closeRoom, getRoom, updateRoomSettings } from "@/lib/api/rooms";
+import { changeRoomTime, closeRoom, getRoom, updateRoomSettings } from "@/lib/api/rooms";
 import { isApiError, userMessage } from "@/lib/api/errors";
 import { createTransfer, getTransfer, transferAction } from "@/lib/api/transfers";
 import { detectDevice } from "@/lib/device/detection";
 import { addToHistory } from "@/lib/history/history";
+import { recordRoomEnded, recordRoomEntered, updateRoomHistory, type RoomEndReason } from "@/lib/history/rooms";
 import { addPairedDevice, ensurePairingKey, pairing } from "@/lib/pairing/pairing";
 import { nativeSinkFactory } from "@/lib/storage/sinks/factory";
 import { requestPersistence } from "@/lib/storage/quota";
@@ -20,7 +21,14 @@ import { defaultTuning } from "@/lib/webrtc/adaptive-controller";
 import { IceServerProvider } from "@/lib/webrtc/ice";
 import { PeerMessenger } from "@/lib/webrtc/messaging";
 import { PeerManager } from "@/lib/webrtc/peer-manager";
-import { MAX_CHAT_MESSAGE, MAX_TEXT_MESSAGE, type AppMessage, type Reaction } from "@/lib/webrtc/protocol";
+import {
+  MAX_CHAT_MESSAGE,
+  MAX_REPLY_QUOTE,
+  MAX_TEXT_MESSAGE,
+  type AppMessage,
+  type ChatReply,
+  type Reaction,
+} from "@/lib/webrtc/protocol";
 import { createResumeStore } from "@/lib/webrtc/resume-manager";
 import { SignalingClient, type EndReason, type SignalingStatus } from "@/lib/webrtc/signaling-client";
 import {
@@ -45,8 +53,18 @@ export interface RoomSnapshot {
   joinUrl: string;
   selfId: string;
   hostDeviceId: string | null;
-  /** Sliding expiry (ms since epoch); the server extends it while devices are active. */
+  /**
+   * When the room ends (ms since epoch). Timed rooms: fixed unless the host adds time.
+   * Other rooms: sliding, the server extends it while devices are active.
+   */
   expiresAt: number | null;
+  createdAt: number | null;
+  /** Length the creator chose; null for rooms without a time limit (sliding expiry). */
+  durationSeconds: number | null;
+  /** The host already changed the time (allowed once). */
+  timeExtended: boolean;
+  /** Time is up: running transfers finish, nothing new can be sent, then the room ends. */
+  wrappingUp: boolean;
   status: RoomStatus;
   signaling: SignalingStatus;
   reconnectAttempts: number;
@@ -70,6 +88,20 @@ export interface InboxMessage {
   peerIds: string[];
   text: string;
   at: number;
+  /** Chat: the message this one answers. */
+  replyTo?: ChatReply;
+  /** Chat: devices tagged with @name. */
+  mentions?: string[];
+  /** Chat: who reacted with what (device ids, this device included). */
+  reactions?: Partial<Record<Reaction, string[]>>;
+}
+
+/** Chat replies, @mentions and reactions are for group rooms: more than 3 devices. */
+export const CHAT_GROUP_MIN_DEVICES = 4;
+
+export interface ChatSendOptions {
+  replyTo?: InboxMessage | null;
+  mentions?: readonly string[];
 }
 
 export interface PairRequest {
@@ -161,6 +193,10 @@ export class RoomSession {
       selfId: session.deviceId,
       hostDeviceId: null,
       expiresAt: null,
+      createdAt: null,
+      durationSeconds: null,
+      timeExtended: false,
+      wrappingUp: false,
       status: "connecting",
       signaling: "idle",
       reconnectAttempts: 0,
@@ -278,12 +314,33 @@ export class RoomSession {
     this.applyRoomView(await updateRoomSettings(this.session.roomId, { discoverable }, this.session.token));
   }
 
+  /** Host only, once: the room's new total length in minutes. */
+  async changeTime(durationMinutes: number): Promise<void> {
+    this.applyRoomView(await changeRoomTime(this.session.roomId, durationMinutes, this.session.token));
+  }
+
+  /**
+   * A timed room whose time ran out: transfers already running finish, but nothing new
+   * (files, texts, chat) can be sent. Also true in the seconds before the server says so.
+   */
+  timeUp(now = Date.now()): boolean {
+    const room = this.room.getSnapshot();
+    return room.wrappingUp || (room.durationSeconds !== null && room.expiresAt !== null && room.expiresAt <= now);
+  }
+
+  private refuseWhenTimeUp(): boolean {
+    if (!this.timeUp()) return false;
+    this.notices.emit("notice", { kind: "warning", message: "Time's up for this room. Nothing new can be sent." });
+    return true;
+  }
+
   // --- peer messages -------------------------------------------------------------------------
 
   /** Sends a text (link, note, password…) privately to the chosen devices. */
   async sendText(peerIds: readonly string[], text: string): Promise<number> {
     const trimmed = text.slice(0, MAX_TEXT_MESSAGE);
     if (!trimmed.trim() || peerIds.length === 0) return 0;
+    if (this.refuseWhenTimeUp()) return 0;
     const id = randomId("t");
     const delivered = await this.messenger.broadcast(peerIds, { kind: "text", id, text: trimmed });
     this.pushInbox({ id, kind: "text", direction: "out", peerIds: delivered, text: trimmed, at: Date.now() });
@@ -293,17 +350,54 @@ export class RoomSession {
     return delivered.length;
   }
 
-  /** Room chat: sent to every online device over the encrypted peer-to-peer channel. */
-  async sendChat(text: string): Promise<void> {
+  /**
+   * Room chat: sent to every online device over the encrypted peer-to-peer channel. In group
+   * rooms a message can answer another one and tag devices (@name).
+   */
+  async sendChat(text: string, options: ChatSendOptions = {}): Promise<void> {
     const trimmed = text.trim().slice(0, MAX_CHAT_MESSAGE);
-    if (!trimmed) return;
+    if (!trimmed || this.refuseWhenTimeUp()) return;
     const id = randomId("c");
     const peers = this.onlinePeerIds();
-    this.pushInbox({ id, kind: "chat", direction: "out", peerIds: peers, text: trimmed, at: Date.now() });
-    const delivered = await this.messenger.broadcast(peers, { kind: "chat", id, text: trimmed });
+    const group = this.room.getSnapshot().devices.length >= CHAT_GROUP_MIN_DEVICES;
+    const known = new Set(this.room.getSnapshot().devices.map((d) => d.device_id));
+    const mentions = group ? [...new Set(options.mentions ?? [])].filter((m) => known.has(m) && m !== this.session.deviceId) : [];
+    const original = group ? options.replyTo : null;
+    const replyTo: ChatReply | undefined = original
+      ? {
+          id: original.id,
+          author: original.direction === "out" ? this.session.deviceId : (original.peerIds[0] ?? ""),
+          text: original.text.slice(0, MAX_REPLY_QUOTE),
+        }
+      : undefined;
+    const message: AppMessage = { kind: "chat", id, text: trimmed };
+    if (replyTo && replyTo.author) message.replyTo = replyTo;
+    if (mentions.length > 0) message.mentions = mentions;
+    this.pushInbox({
+      id,
+      kind: "chat",
+      direction: "out",
+      peerIds: peers,
+      text: trimmed,
+      at: Date.now(),
+      replyTo: message.replyTo,
+      mentions: message.mentions,
+    });
+    this.countChat();
+    const delivered = await this.messenger.broadcast(peers, message);
     if (delivered.length < peers.length) {
       this.notices.emit("notice", { kind: "warning", message: "Your message didn't reach every device." });
     }
+  }
+
+  /** Adds or removes this device's reaction on a chat message, for everyone in the room. */
+  async reactToChat(messageId: string, emoji: Reaction): Promise<void> {
+    if (this.refuseWhenTimeUp()) return;
+    const message = this.inbox.getSnapshot().find((m) => m.id === messageId && m.kind === "chat");
+    if (!message) return;
+    const on = !(message.reactions?.[emoji] ?? []).includes(this.session.deviceId);
+    this.applyChatReaction(messageId, this.session.deviceId, emoji, on);
+    await this.messenger.broadcast(this.onlinePeerIds(), { kind: "chat_reaction", messageId, emoji, on });
   }
 
   setChatOpen(open: boolean): void {
@@ -313,6 +407,7 @@ export class RoomSession {
 
   /** Reacts to a received file; the sender sees it on their transfer card. */
   async react(transferId: string, emoji: Reaction): Promise<void> {
+    if (this.refuseWhenTimeUp()) return;
     const senderId = this.transfers.markReacted(transferId, emoji);
     if (senderId) await this.messenger.send(senderId, { kind: "reaction", transferId, emoji });
   }
@@ -348,6 +443,7 @@ export class RoomSession {
 
   /** Leaves for good: the server removes this device and revokes the token. */
   leave(): void {
+    recordRoomEnded(this.session.roomId, "left");
     this.signaling.leave();
     clearSession(this.session.roomId);
     this.dispose();
@@ -418,6 +514,20 @@ export class RoomSession {
     }
     this.applyRoomView(event.room);
     this.patch({ status: "live" });
+    if (!this.wasLive) {
+      const room = this.room.getSnapshot();
+      recordRoomEntered({
+        roomId: room.roomId,
+        roomCode: room.roomCode,
+        host: room.hostDeviceId === room.selfId,
+        kind: room.kind,
+        theme: room.theme,
+        mode: room.mode,
+        durationSeconds: room.durationSeconds,
+        timeExtended: room.timeExtended,
+        peakDevices: room.devices.length,
+      });
+    }
     if (this.wasLive) {
       this.notices.emit("notice", { kind: "success", message: "Reconnected" });
     }
@@ -436,23 +546,53 @@ export class RoomSession {
 
   private applyRoomView(room: RoomView): void {
     if (this.session.mode === "standard") updateRememberedTheme(room.room_id, room.theme);
+    const before = this.room.getSnapshot();
     this.patch({
       roomCode: room.room_code,
       joinUrl: room.join_url,
       hostDeviceId: room.host_device_id,
       expiresAt: Date.parse(room.expires_at) || null,
+      createdAt: Date.parse(room.created_at) || null,
+      durationSeconds: room.duration_seconds ?? null,
+      timeExtended: room.time_extended ?? false,
+      wrappingUp: room.wrapping_up ?? false,
       devices: room.devices,
       kind: room.kind ?? "standard",
       maxDevices: room.max_devices,
       discoverable: room.discoverable ?? false,
       theme: room.theme ?? "default",
     });
+    const after = this.room.getSnapshot();
+    if (after.wrappingUp && !before.wrappingUp) {
+      this.notices.emit("notice", {
+        kind: "warning",
+        message: "Time's up. Files already on their way will finish, then the room closes.",
+      });
+    }
+    if (after.timeExtended && !before.timeExtended && before.durationSeconds !== null && after.durationSeconds !== null) {
+      this.notices.emit("notice", { kind: "info", message: `The room now lasts ${Math.round(after.durationSeconds / 60)} minutes.` });
+    }
+    if (this.wasLive) {
+      updateRoomHistory(after.roomId, (entry) => ({
+        theme: after.theme,
+        durationSeconds: after.durationSeconds,
+        timeExtended: after.timeExtended,
+        host: entry.host || after.hostDeviceId === after.selfId,
+        peakDevices: Math.max(entry.peakDevices, after.devices.length),
+      }));
+    }
   }
 
   private upsertDevice(device: DeviceView, joined: boolean): void {
     const devices = this.room.getSnapshot().devices.filter((d) => d.device_id !== device.device_id);
     devices.push(device);
     this.patch({ devices, hostDeviceId: device.is_host ? device.device_id : this.room.getSnapshot().hostDeviceId });
+    if (joined) {
+      updateRoomHistory(this.session.roomId, (entry) => ({
+        peakDevices: Math.max(entry.peakDevices, devices.length),
+        host: entry.host || (device.is_host && device.device_id === this.session.deviceId),
+      }));
+    }
     if (device.device_id === this.session.deviceId) return;
     if (device.connection_state === "connected") this.transfers.onPeerPresent(device.device_id);
     if (joined) logger.debug("room", `${device.device_name} joined`);
@@ -476,9 +616,31 @@ export class RoomSession {
         this.pushInbox({ id: message.id, kind: "text", direction: "in", peerIds: [peerId], text: message.text, at: Date.now() });
         this.notices.emit("notice", { kind: "info", message: `${this.deviceName(peerId)} sent you a text` });
         break;
-      case "chat":
-        this.pushInbox({ id: message.id, kind: "chat", direction: "in", peerIds: [peerId], text: message.text, at: Date.now() });
-        if (!this.chatOpen) this.unreadChat.update((n) => n + 1);
+      case "chat": {
+        this.pushInbox({
+          id: message.id,
+          kind: "chat",
+          direction: "in",
+          peerIds: [peerId],
+          text: message.text,
+          at: Date.now(),
+          replyTo: message.replyTo,
+          mentions: message.mentions,
+        });
+        this.countChat();
+        if (!this.chatOpen) {
+          this.unreadChat.update((n) => n + 1);
+          const self = this.session.deviceId;
+          if (message.mentions?.includes(self)) {
+            this.notices.emit("notice", { kind: "info", message: `${this.deviceName(peerId)} mentioned you in the chat` });
+          } else if (message.replyTo?.author === self) {
+            this.notices.emit("notice", { kind: "info", message: `${this.deviceName(peerId)} replied to you in the chat` });
+          }
+        }
+        break;
+      }
+      case "chat_reaction":
+        this.applyChatReaction(message.messageId, peerId, message.emoji, message.on);
         break;
       case "reaction":
         this.transfers.addReaction(message.transferId, peerId, message.emoji);
@@ -508,6 +670,22 @@ export class RoomSession {
     this.inbox.update((list) => [...list.filter((m) => m.id !== message.id), message].slice(-MAX_INBOX));
   }
 
+  private applyChatReaction(messageId: string, deviceId: string, emoji: Reaction, on: boolean): void {
+    this.inbox.update((list) =>
+      list.map((m) => {
+        if (m.id !== messageId || m.kind !== "chat") return m;
+        const others = (m.reactions?.[emoji] ?? []).filter((id) => id !== deviceId);
+        const reactions = { ...m.reactions, [emoji]: on ? [...others, deviceId] : others };
+        if (reactions[emoji]?.length === 0) delete reactions[emoji];
+        return { ...m, reactions };
+      }),
+    );
+  }
+
+  private countChat(): void {
+    updateRoomHistory(this.session.roomId, (entry) => ({ chatMessages: entry.chatMessages + 1 }));
+  }
+
   private onCompletion(c: Completion): void {
     const record = addToHistory({
       at: Date.now(),
@@ -521,6 +699,11 @@ export class RoomSession {
       seconds: c.seconds,
       roomSize: this.room.getSnapshot().devices.length,
     });
+    updateRoomHistory(this.session.roomId, (entry) =>
+      c.direction === "outgoing"
+        ? { sentFiles: entry.sentFiles + 1, sentBytes: entry.sentBytes + c.fileSize }
+        : { receivedFiles: entry.receivedFiles + 1, receivedBytes: entry.receivedBytes + c.fileSize },
+    );
     const newRecord = record.newAverageRecord || record.newPeakRecord;
     // Merge completions that land close together into one celebration.
     const pending = this.pendingCelebration;
@@ -598,6 +781,9 @@ export class RoomSession {
   private endRoom(reason: EndReason | "expired"): void {
     if (this.room.getSnapshot().status === "ended") return;
     this.patch({ status: "ended", endReason: reason });
+    const ended: RoomEndReason | null =
+      reason === "expired" ? "expired" : reason === "room_ended" || reason === "room_not_found" ? "closed" : reason === "removed" ? "removed" : reason === "left" ? "left" : null;
+    if (ended) recordRoomEnded(this.session.roomId, ended);
     clearSession(this.session.roomId);
     // Gone for good (closed, expired, removed by the host): drop it from "your active rooms".
     // Leaving on purpose keeps it there so the room can be rejoined.

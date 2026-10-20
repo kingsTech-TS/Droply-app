@@ -94,14 +94,28 @@ export type Reaction = (typeof REACTIONS)[number];
 export const MAX_TEXT_MESSAGE = 64 * 1024;
 export const MAX_CHAT_MESSAGE = 2000;
 
+export const MAX_REPLY_QUOTE = 200;
+export const MAX_MENTIONS = 50;
+
+/** The chat message being replied to, quoted so it shows even if the receiver missed it. */
+export interface ChatReply {
+  id: string;
+  /** Device that wrote the quoted message. */
+  author: string;
+  text: string;
+}
+
 export type AppMessage =
   | { kind: "text"; id: string; text: string }
-  | { kind: "chat"; id: string; text: string }
+  | { kind: "chat"; id: string; text: string; replyTo?: ChatReply; mentions?: string[] }
+  // Adds (`on`) or removes this device's reaction on a chat message; sent to everyone.
+  | { kind: "chat_reaction"; messageId: string; emoji: Reaction; on: boolean }
   | { kind: "reaction"; transferId: string; emoji: Reaction }
   // Pairing ("My devices"): the requester shares its group key over the encrypted channel.
   | { kind: "pair_request"; key: string; name: string }
   | { kind: "pair_accept"; name: string }
   | { kind: "pair_decline" };
+export type ChatMessage = Extract<AppMessage, { kind: "chat" }>;
 
 type Obj = Record<string, unknown>;
 
@@ -117,8 +131,23 @@ function parseApp(value: unknown): AppMessage | null {
   switch (m.kind) {
     case "text":
       return isId(m.id) && isStr(m.text, MAX_TEXT_MESSAGE, 1) ? { kind: "text", id: m.id, text: m.text } : null;
-    case "chat":
-      return isId(m.id) && isStr(m.text, MAX_CHAT_MESSAGE, 1) ? { kind: "chat", id: m.id, text: m.text } : null;
+    case "chat": {
+      if (!isId(m.id) || !isStr(m.text, MAX_CHAT_MESSAGE, 1)) return null;
+      const chat: ChatMessage = { kind: "chat", id: m.id, text: m.text };
+      // Older peers send neither field; malformed extras are dropped, not the message.
+      const reply = m.replyTo as Obj | undefined;
+      if (typeof reply === "object" && reply !== null && isId(reply.id) && isId(reply.author) && isStr(reply.text, MAX_REPLY_QUOTE)) {
+        chat.replyTo = { id: reply.id, author: reply.author, text: reply.text };
+      }
+      if (Array.isArray(m.mentions) && m.mentions.length <= MAX_MENTIONS && m.mentions.every(isId)) {
+        chat.mentions = [...new Set(m.mentions as string[])];
+      }
+      return chat;
+    }
+    case "chat_reaction":
+      return isId(m.messageId) && (REACTIONS as readonly unknown[]).includes(m.emoji) && typeof m.on === "boolean"
+        ? { kind: "chat_reaction", messageId: m.messageId, emoji: m.emoji as Reaction, on: m.on }
+        : null;
     case "reaction":
       return typeof m.transferId === "string" &&
         m.transferId.length <= 70 &&

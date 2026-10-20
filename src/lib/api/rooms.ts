@@ -3,12 +3,14 @@ import type {
   NearbyRoom,
   RendezvousSession,
   RoomJoinRequest,
+  RoomCreateRequest,
   RoomKind,
   RoomRef,
   RoomSession,
   RoomStatusView,
   RoomSettingsUpdate,
   RoomTheme,
+  RoomTimeUpdate,
   RoomView,
 } from "@/types/room";
 import { apiClient, type ApiClient } from "./client";
@@ -19,17 +21,19 @@ export function createRoom(
   client: ApiClient = apiClient,
   kind: RoomKind = "standard",
   theme: RoomTheme = "default",
+  durationMinutes: number | null = null,
 ): Promise<RoomSession> {
-  if (theme === "default") return client.request<RoomSession>("POST", "/rooms", { body: { device, kind } });
-  // A server that predates themes on create rejects the field (422): create without it.
-  return client
-    .request<RoomSession>("POST", "/rooms", { body: { device, kind, theme } })
-    .catch((error: unknown) => {
-      if (isApiError(error) && error.status === 422) {
-        return client.request<RoomSession>("POST", "/rooms", { body: { device, kind } });
-      }
-      throw error;
-    });
+  const body: RoomCreateRequest = { device, kind };
+  if (theme !== "default") body.theme = theme;
+  if (durationMinutes !== null) body.duration_minutes = durationMinutes;
+  if (!body.theme && !body.duration_minutes) return client.request<RoomSession>("POST", "/rooms", { body });
+  // A server that predates themes or timed rooms rejects the fields (422): create without them.
+  return client.request<RoomSession>("POST", "/rooms", { body }).catch((error: unknown) => {
+    if (isApiError(error) && error.status === 422) {
+      return client.request<RoomSession>("POST", "/rooms", { body: { device, kind } });
+    }
+    throw error;
+  });
 }
 
 /**
@@ -73,6 +77,20 @@ export function updateRoomSettings(
     body: settings,
     token,
   });
+}
+
+/**
+ * Host only, once per room: sets a longer total length (at most ROOM_MAX_MINUTES from when the
+ * room was created). Every device receives `room_updated` with the new expiry.
+ */
+export function changeRoomTime(
+  roomId: string,
+  durationMinutes: number,
+  token: string,
+  client: ApiClient = apiClient,
+): Promise<RoomView> {
+  const body: RoomTimeUpdate = { duration_minutes: durationMinutes };
+  return client.request<RoomView>("PATCH", `/rooms/${encodeURIComponent(roomId)}/time`, { body, token });
 }
 
 /** Which of these rooms are still open (needs each room's id and code). */

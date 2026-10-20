@@ -40,6 +40,8 @@ const MESSAGES: Partial<Record<ClientErrorCode, string>> = {
   ROOM_NOT_FOUND: "This room doesn't exist anymore.",
   ROOM_EXPIRED: "This room has expired. Create a new room to continue.",
   ROOM_FULL: "This room is full.",
+  ROOM_TIME_UP: "Time's up for this room. Files already on their way will finish, but nothing new can be sent.",
+  ROOM_TIME_LOCKED: "The room's time can't be changed again.",
   INVALID_ROOM_CODE: "That room code didn't work. Check it and try again.",
   DEVICE_NOT_FOUND: "That device has left the room.",
   TRANSFER_NOT_FOUND: "This transfer no longer exists.",

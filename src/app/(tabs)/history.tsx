@@ -1,4 +1,4 @@
-// Transfer history, kept on this device only (website: /history).
+// Transfer and room history, kept on this device only (website: /history).
 import { router } from "expo-router";
 import { ArrowDown, ArrowUp, Clock, Trophy } from "lucide-react-native";
 import { useMemo, useState } from "react";
@@ -9,6 +9,7 @@ import { formatBytes, formatSpeed } from "@/lib/utils/format";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { useTheme } from "@/theme/theme-provider";
 import { space } from "@/theme/tokens";
+import { RoomHistoryView } from "@/components/history/room-history-view";
 import { TAB_BAR_SPACE } from "@/components/tab-bar";
 import { FileIcon } from "@/components/transfer/file-icon";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ function Row({ entry, index }: { entry: HistoryEntry; index: number }) {
 export default function HistoryScreen() {
   const entries = useLocalStore(history);
   const best = useLocalStore(records);
+  const [tab, setTab] = useState<"transfers" | "rooms">("transfers");
   const [filter, setFilter] = useState<Filter>("all");
   const list = useMemo(() => entries.filter((e) => filter === "all" || e.direction === filter).slice().reverse(), [entries, filter]);
 
@@ -70,6 +72,41 @@ export default function HistoryScreen() {
       actions={<Button label="Stats" icon={Trophy} size="sm" variant="tinted" onPress={() => router.push("/stats")} />}
     >
       <Segmented
+        accessibilityLabel="History"
+        options={[
+          { value: "transfers", label: "Transfers" },
+          { value: "rooms", label: "Rooms" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+      {tab === "rooms" ? (
+        <RoomHistoryView />
+      ) : (
+        <TransferHistory entries={entries} list={list} best={best} filter={filter} onFilter={setFilter} onClear={() => void clear()} />
+      )}
+    </Screen>
+  );
+}
+
+function TransferHistory({
+  entries,
+  list,
+  best,
+  filter,
+  onFilter,
+  onClear,
+}: {
+  entries: HistoryEntry[];
+  list: HistoryEntry[];
+  best: ReturnType<typeof records.get>;
+  filter: Filter;
+  onFilter: (filter: Filter) => void;
+  onClear: () => void;
+}) {
+  return (
+    <View style={{ marginTop: space.md }}>
+      <Segmented
         accessibilityLabel="Filter"
         options={[
           { value: "all", label: "All" },
@@ -77,7 +114,7 @@ export default function HistoryScreen() {
           { value: "incoming", label: "Received" },
         ]}
         value={filter}
-        onChange={setFilter}
+        onChange={onFilter}
       />
       {best.bestAverage || best.bestPeak ? (
         <Card tone="primary" level={0} style={{ marginTop: space.lg, gap: 2 }}>
@@ -100,7 +137,7 @@ export default function HistoryScreen() {
           ))}
         </Card>
       )}
-      {entries.length > 0 ? <Button label="Clear history" variant="ghost" onPress={() => void clear()} style={{ marginTop: space.lg }} /> : null}
-    </Screen>
+      {entries.length > 0 ? <Button label="Clear history" variant="ghost" onPress={onClear} style={{ marginTop: space.lg }} /> : null}
+    </View>
   );
 }
