@@ -8,11 +8,17 @@ export type DeviceType = "phone" | "tablet" | "laptop" | "desktop" | "unknown";
 // disconnected = gone; removed by the server after a few minutes
 export type DeviceConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
+/** How Droply runs: a browser tab, the website installed (home screen / PWA), or this native app. */
+export type ClientKind = "browser" | "installed" | "app";
+
 export interface DeviceInfoIn {
   device_name: string;
   device_type?: DeviceType;
   browser?: string | null;
   operating_system?: string | null;
+  client?: ClientKind | null;
+  /** Random per-install id; the server only counts a keyed hash of it (distinct users). */
+  install_id?: string | null;
 }
 
 export interface DeviceView {

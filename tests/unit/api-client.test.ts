@@ -1,6 +1,6 @@
 import { ApiClient } from "@/lib/api/client";
 import { ApiError, userMessage } from "@/lib/api/errors";
-import { createRoom } from "@/lib/api/rooms";
+import { createRoom, joinRoom } from "@/lib/api/rooms";
 import { parseServerMessage } from "@/lib/webrtc/server-messages";
 
 function response(status: number, body: unknown, headers: Record<string, string> = {}): Response {
@@ -133,8 +133,11 @@ describe("createRoom with a theme", () => {
     await createRoom(device, client, "event", "birthday");
     await createRoom(device, client);
     const bodies = fetchImpl.mock.calls.map((call) => JSON.parse(String((call as unknown as [string, RequestInit])[1].body)));
-    expect(bodies[0]).toEqual({ device, kind: "event", theme: "birthday" });
-    expect(bodies[1]).toEqual({ device, kind: "standard" });
+    const sent = { ...device, client: "app", install_id: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/) };
+    expect(bodies[0]).toEqual({ device: sent, kind: "event", theme: "birthday" });
+    expect(bodies[1]).toEqual({ device: sent, kind: "standard" });
+    // The same random id every time (one install = one user).
+    expect(bodies[0].device.install_id).toBe(bodies[1].device.install_id);
   });
 
   it("falls back to an unthemed room on servers that reject the field", async () => {
@@ -145,6 +148,22 @@ describe("createRoom with a theme", () => {
     const client = new ApiClient("http://api.test", fetchImpl as unknown as typeof fetch);
     const session = await createRoom(device, client, "standard", "ocean");
     expect(session.room_id).toBe("rm_2");
-    expect(JSON.parse(String((fetchImpl.mock.calls[1] as [string, RequestInit])[1].body))).toEqual({ device, kind: "standard" });
+    expect(JSON.parse(String((fetchImpl.mock.calls[1] as [string, RequestInit])[1].body))).toEqual({
+      device: expect.objectContaining(device),
+      kind: "standard",
+    });
+  });
+
+  it("leaves out the app kind and install id on servers that predate them", async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response(422, envelope("VALIDATION_ERROR")))
+      .mockResolvedValueOnce(response(200, { room_id: "rm_3" }));
+    const client = new ApiClient("http://api.test", fetchImpl as unknown as typeof fetch);
+    const session = await joinRoom("K7X9PQ", device, null, client);
+    expect(session.room_id).toBe("rm_3");
+    const [first, second] = fetchImpl.mock.calls.map((call) => JSON.parse(String((call as [string, RequestInit])[1].body)));
+    expect(first.device).toMatchObject({ client: "app" });
+    expect(second).toEqual({ room_code: "K7X9PQ", device });
   });
 });

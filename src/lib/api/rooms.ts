@@ -13,15 +13,40 @@ import type {
   RoomTimeUpdate,
   RoomView,
 } from "@/types/room";
+import { withClientInfo } from "@/lib/device/client";
 import { apiClient, type ApiClient } from "./client";
 import { isApiError } from "./errors";
 
+/**
+ * Sends `device` with the app kind and install id (anonymous usage counts). A server that
+ * predates those fields rejects them (422): the request is sent again without them.
+ */
+async function withDevice<T>(device: DeviceInfoIn, send: (device: DeviceInfoIn) => Promise<T>): Promise<T> {
+  const full = withClientInfo(device);
+  try {
+    return await send(full);
+  } catch (error) {
+    if (isApiError(error) && error.status === 422 && (full.client || full.install_id)) return send(device);
+    throw error;
+  }
+}
+
 export function createRoom(
-  device: DeviceInfoIn,
+  rawDevice: DeviceInfoIn,
   client: ApiClient = apiClient,
   kind: RoomKind = "standard",
   theme: RoomTheme = "default",
   durationMinutes: number | null = null,
+): Promise<RoomSession> {
+  return withDevice(rawDevice, (device) => createRoomWith(device, client, kind, theme, durationMinutes));
+}
+
+function createRoomWith(
+  device: DeviceInfoIn,
+  client: ApiClient,
+  kind: RoomKind,
+  theme: RoomTheme,
+  durationMinutes: number | null,
 ): Promise<RoomSession> {
   const body: RoomCreateRequest = { device, kind };
   if (theme !== "default") body.theme = theme;
@@ -47,10 +72,9 @@ export function joinRoom(
   client: ApiClient = apiClient,
   hostKey: string | null = null,
 ): Promise<RoomSession> {
-  const body: RoomJoinRequest = hostKey ? { room_code: roomCode, device, host_key: hostKey } : { room_code: roomCode, device };
-  return client.request<RoomSession>("POST", "/rooms/join", {
-    body,
-    token,
+  return withDevice(device, (info) => {
+    const body: RoomJoinRequest = hostKey ? { room_code: roomCode, device: info, host_key: hostKey } : { room_code: roomCode, device: info };
+    return client.request<RoomSession>("POST", "/rooms/join", { body, token });
   });
 }
 
@@ -113,5 +137,5 @@ export function rendezvous(
   token: string | null = null,
   client: ApiClient = apiClient,
 ): Promise<RendezvousSession> {
-  return client.request<RendezvousSession>("POST", "/rendezvous", { body: { key, device }, token });
+  return withDevice(device, (info) => client.request<RendezvousSession>("POST", "/rendezvous", { body: { key, device: info }, token }));
 }
