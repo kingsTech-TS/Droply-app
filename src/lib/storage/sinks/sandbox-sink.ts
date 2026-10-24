@@ -1,7 +1,7 @@
 // Default storage tier: a `.part` file in the app sandbox, written at chunk offsets through
 // one native FileHandle (random access, so a resumed transfer fills only the gaps). The
-// website's equivalent is OPFS. On completion the file is moved into Received/ under a
-// sanitized, de-duplicated name.
+// website's equivalent is OPFS. On completion the file is moved into Droply/ (Documents) under
+// a sanitized, de-duplicated name.
 import { Directory, File as FsFile, FileMode, Paths, type FileHandle } from "expo-file-system";
 import { localFileFromUri, type LocalFile } from "@/lib/files/local-file";
 import { logger } from "@/lib/utils/logger";
@@ -9,7 +9,8 @@ import { dedupeFileName, sanitizeFileName, sanitizeFolderPath } from "@/lib/util
 import type { ChunkSink } from "./sink";
 
 export const INCOMING_DIR = "droply-incoming";
-export const RECEIVED_DIR = "Received";
+/** Finished files. On iOS this is the Droply folder people see in the Files app. */
+export const RECEIVED_DIR = "Droply";
 
 export function incomingDirectory(): Directory {
   return new Directory(Paths.cache, INCOMING_DIR);

@@ -1621,6 +1621,14 @@ export class TransferManager {
     this.publish();
   }
 
+  /** Saves received files still waiting for the Save button (e.g. the folder was just chosen). */
+  async autoSaveReady(): Promise<void> {
+    for (const record of this.incoming.values()) {
+      if (record.save === "ready" && record.finalFile && !record.dismissed) await this.tryAutoSave(record, record.finalFile);
+    }
+    this.publish();
+  }
+
   /** Saves a finished file without the Save button, when this device is set up to. */
   private async tryAutoSave(record: IncomingRecord, file: LocalFile): Promise<void> {
     if (!this.options.autoSave) return;

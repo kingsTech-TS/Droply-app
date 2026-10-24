@@ -2,9 +2,10 @@
 // items (My devices, storage, privacy, diagnostics, version).
 import * as Application from "expo-application";
 import { router } from "expo-router";
-import { Bell, Gauge, HardDrive, Info, Laptop, Lock, Moon, PartyPopper, Shield, Smartphone, Stethoscope, Trophy, Vibrate, Volume2, ImageDown } from "lucide-react-native";
-import { useState } from "react";
-import { Linking, View } from "react-native";
+import { Bell, Gauge, HardDrive, Info, Laptop, Lock, Moon, PartyPopper, Shield, Smartphone, Stethoscope, Trophy, Vibrate, Volume2, ImageDown, FolderDown } from "lucide-react-native";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { Linking, Platform, View } from "react-native";
+import { chooseDroplyFolder, droplyFolder, refreshDroplyFolder } from "@/lib/storage/droply-folder";
 import { brand } from "@/config/brand";
 import { env } from "@/config/env";
 import { cleanDeviceName, MAX_DEVICE_NAME, saveDeviceName } from "@/lib/device/device-name";
@@ -39,7 +40,10 @@ const ROWS: Array<{ key: keyof Preferences; label: string; hint: string; icon: t
   { key: "haptics", label: "Vibration", hint: "Haptic feedback when something arrives.", icon: Vibrate },
   { key: "notifications", label: "Notifications", hint: "When files or texts arrive while Droply is in the background.", icon: Bell },
   { key: "sendSmallerPhotos", label: "Send smaller photos", hint: "Resize large photos before sending (saves time on slow networks).", icon: ImageDown },
+  { key: "autoSave", label: "Save received files automatically", hint: "No Save button: files go straight into a Droply folder.", icon: FolderDown },
 ];
+
+const IOS = Platform.OS === "ios";
 
 function folderBytes(): number {
   try {
@@ -53,6 +57,10 @@ function folderBytes(): number {
 export default function SettingsScreen() {
   const { colors, preference, setPreference } = useTheme();
   const prefs = useLocalStore(preferences);
+  const saveFolder = useSyncExternalStore(droplyFolder.subscribe, droplyFolder.getSnapshot, droplyFolder.getSnapshot);
+  useEffect(() => {
+    refreshDroplyFolder();
+  }, []);
   const paired = useLocalStore(pairing);
   const identity = useDevice();
   const [name, setName] = useState(identity.name);
@@ -83,8 +91,11 @@ export default function SettingsScreen() {
 
   const clearReceived = async () => {
     const ok = await confirm({
-      title: "Delete received files?",
-      message: "Removes the files kept in Droply's own storage. Files you saved to Photos, Files or a folder are not affected.",
+      // iOS: these are the files in the Droply folder people see in the Files app.
+      title: IOS ? "Delete your Droply folder's files?" : "Delete received files?",
+      message: IOS
+        ? "Deletes every file in Files › On My iPhone › Droply › Droply. Files you saved to Photos or elsewhere are not affected."
+        : "Removes the files kept in Droply's own storage. Files in your Droply folder, Photos or other folders are not affected.",
       confirmLabel: "Delete",
       destructive: true,
     });
@@ -162,6 +173,18 @@ export default function SettingsScreen() {
 
       <SectionHeader title="Receiving" icon={Shield} />
       <Card style={{ paddingVertical: space.xs }}>
+        {prefs.autoSave ? (
+          <>
+            <ListRow
+              icon={FolderDown}
+              title="Droply folder"
+              subtitle={saveFolder.label || "Not chosen yet: you'll be asked when files first arrive"}
+              onPress={IOS ? undefined : () => void chooseDroplyFolder()}
+              trailing={IOS ? undefined : <Text variant="footnote" tone="primary">{saveFolder.label ? "Change" : "Choose"}</Text>}
+            />
+            <Divider inset={46} />
+          </>
+        ) : null}
         <ListRow
           icon={Laptop}
           title="My devices"
@@ -175,10 +198,10 @@ export default function SettingsScreen() {
       <SectionHeader title="Storage" icon={HardDrive} />
       <Card style={{ gap: space.sm }}>
         <Text variant="footnote" tone="muted">
-          Received files kept by Droply: {formatBytes(storage.received)}
+          {IOS ? "Files in your Droply folder" : "Received files kept by Droply"}: {formatBytes(storage.received)}
           {storage.temporary > 0 ? ` · unfinished transfers: ${formatBytes(storage.temporary)}` : ""}
         </Text>
-        <Button label="Delete received files" size="sm" variant="outline" onPress={() => void clearReceived()} disabled={storage.received === 0} />
+        <Button label={IOS ? "Delete Droply folder files" : "Delete received files"} size="sm" variant="outline" onPress={() => void clearReceived()} disabled={storage.received === 0} />
       </Card>
 
       <SectionHeader title="More" />

@@ -1,6 +1,6 @@
 // Connection, expiry and "keep the app open" banners (website: connection-banner.tsx,
 // room-banners.tsx).
-import { CloudOff, LoaderCircle, Smartphone, Timer, WifiOff } from "lucide-react-native";
+import { CloudOff, FolderDown, LoaderCircle, Smartphone, Timer, WifiOff } from "lucide-react-native";
 import type { RoomSnapshot } from "@/lib/session/room-session";
 import { formatCountdown } from "@/lib/utils/format";
 import { useCountdown } from "@/hooks/use-countdown";
@@ -47,6 +47,17 @@ export function KeepAppOpenBanner({ show }: { show: boolean }) {
   return (
     <Banner tone="info" icon={Smartphone}>
       Keep Droply open until the transfer finishes. If it&apos;s interrupted, it continues from where it stopped.
+    </Banner>
+  );
+}
+
+/** Android, once: where the Droply folder goes (saving waits until it's chosen). */
+export function SaveFolderBanner({ onChoose }: { onChoose: () => void }) {
+  return (
+    <Banner tone="info" icon={FolderDown} action={<Button label="Choose folder" size="sm" onPress={onChoose} />}>
+      <Text variant="footnote" style={{ fontWeight: "600" }}>
+        Choose where Droply saves received files. It makes a Droply folder there (Download works well).
+      </Text>
     </Banner>
   );
 }

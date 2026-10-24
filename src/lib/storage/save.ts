@@ -3,12 +3,13 @@
 // image or video), and are never executed or rendered by the app.
 import * as MediaLibrary from "expo-media-library";
 import * as Sharing from "expo-sharing";
-import { Directory, File as FsFile } from "expo-file-system";
+import { Directory } from "expo-file-system";
 import { Platform } from "react-native";
 import type { LocalFile } from "@/lib/files/local-file";
 import { sniffMedia } from "@/lib/media/sniff";
 import { logger } from "@/lib/utils/logger";
 import { sanitizeFileName } from "@/lib/utils/sanitize-filename";
+import { copyIntoFolder } from "./droply-folder";
 
 export type SaveResult = "saved" | "cancelled";
 
@@ -64,15 +65,9 @@ export async function pickSaveFolder(): Promise<Directory | null> {
   }
 }
 
-/** Copies a file into a folder the user picked (e.g. Downloads), under a sanitized name. */
+/** Copies a file into a folder the user picked (e.g. Downloads), under a name nothing else uses. */
 export async function copyToFolder(file: LocalFile, folder: Directory, rawName: string, folderPath?: string | null): Promise<void> {
-  let target = folder;
-  for (const part of (folderPath ?? "").split("/").filter(Boolean)) {
-    const existing = target.list().find((entry) => entry instanceof Directory && entry.name === part);
-    target = existing instanceof Directory ? existing : target.createDirectory(part);
-  }
-  const destination = target.createFile(sanitizeFileName(rawName), "application/octet-stream");
-  await new FsFile(file.uri).copy(destination, { overwrite: true });
+  await copyIntoFolder(file, folder, rawName, folderPath);
 }
 
 export async function saveToFolder(file: LocalFile, rawName: string): Promise<SaveResult> {

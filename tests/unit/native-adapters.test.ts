@@ -66,26 +66,26 @@ describe("maxMessageSizeFromSdp", () => {
 describe("SandboxSink", () => {
   beforeEach(() => memFs.clear());
 
-  it("writes chunks at their offsets in any order and moves the file to Received/", async () => {
+  it("writes chunks at their offsets in any order and moves the file to the Droply folder", async () => {
     const sink = new SandboxSink("tr_abc", "report.pdf");
     await sink.write(1, 4, new Uint8Array([5, 6, 7, 8]));
     await sink.write(0, 0, new Uint8Array([1, 2, 3, 4]));
     expect(SandboxSink.existingBytes("tr_abc")).toBe(8);
     const file = await sink.finalize();
     expect(file.name).toBe("report.pdf");
-    expect(file.uri).toContain("/Received/");
+    expect(file.uri).toContain("/Droply/");
     expect(Array.from(readMem(file.uri))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(SandboxSink.existingBytes("tr_abc")).toBe(0);
   });
 
-  it("sanitizes and de-duplicates names, and never escapes Received/", async () => {
+  it("sanitizes and de-duplicates names, and never escapes the Droply folder", async () => {
     const a = new SandboxSink("tr_1", "../../evil.sh");
     await a.write(0, 0, new Uint8Array([1]));
     const first = await a.finalize();
     const b = new SandboxSink("tr_2", "../../evil.sh");
     await b.write(0, 0, new Uint8Array([2]));
     const second = await b.finalize();
-    expect(first.uri).toMatch(/\/Received\/[^/]+$/);
+    expect(first.uri).toMatch(/\/Droply\/[^/]+$/);
     expect(first.name).not.toContain("..");
     expect(second.name).not.toBe(first.name);
   });

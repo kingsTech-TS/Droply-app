@@ -1,9 +1,12 @@
 // "Incoming files" (website: incoming-transfer.tsx): who, how many, total, a storage check,
 // "Auto-accept from X in this room", Decline / Save to folder… (Android) / Accept.
 import { Download, FolderDown, TriangleAlert } from "lucide-react-native";
-import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { Platform, StyleSheet, View } from "react-native";
 import Animated, { FadeInUp, FadeOutUp, LinearTransition } from "react-native-reanimated";
+import { useLocalStore } from "@/hooks/use-local-store";
+import { preferences } from "@/lib/fun/prefs";
+import { chooseDroplyFolder, droplyFolder, refreshDroplyFolder } from "@/lib/storage/droply-folder";
 import { canSaveDirectlyToDisk, pickDirectory, type DirectoryHandleLike } from "@/lib/storage/sinks/fs-access-sink";
 import { formatBytes } from "@/lib/utils/format";
 import type { IncomingRequest, TransferSnapshot } from "@/lib/webrtc/transfer-manager";
@@ -44,6 +47,25 @@ export function IncomingCard({ request, senderName, files, checkStorage, onAccep
     };
   }, [checkStorage, request.totalBytes]);
   const tooBig = fits === false;
+
+  const { autoSave } = useLocalStore(preferences);
+  const folder = useSyncExternalStore(droplyFolder.subscribe, droplyFolder.getSnapshot, droplyFolder.getSnapshot);
+  useEffect(() => {
+    refreshDroplyFolder();
+  }, []);
+
+  const accept = async () => {
+    setBusy(true);
+    // Android: the first time, choose where the Droply folder goes (from this tap).
+    if (autoSave && Platform.OS === "android" && folder.status === "unset") await chooseDroplyFolder();
+    onAccept({ trust });
+  };
+
+  const saveNote = !autoSave
+    ? null
+    : folder.status === "ready"
+      ? `Saves to ${folder.label} automatically.`
+      : "Saves automatically to a Droply folder: you'll choose where it goes this once.";
 
   const acceptToFolder = async () => {
     const directory = await pickDirectory();
@@ -100,17 +122,14 @@ export function IncomingCard({ request, senderName, files, checkStorage, onAccep
           <Button label="Decline" variant="outline" onPress={onDecline} disabled={busy} style={{ flex: 1 }} />
           {folderPossible ? <Button label="Save to folder…" icon={FolderDown} variant={tooBig ? "primary" : "secondary"} onPress={() => void acceptToFolder()} disabled={busy} style={{ flex: 1.3 }} /> : null}
           {!tooBig || !folderPossible ? (
-            <Button
-              label="Accept"
-              onPress={() => {
-                setBusy(true);
-                onAccept({ trust });
-              }}
-              disabled={busy}
-              style={{ flex: 1 }}
-            />
+            <Button label="Accept" onPress={() => void accept()} disabled={busy} style={{ flex: 1 }} />
           ) : null}
         </View>
+        {saveNote ? (
+          <Text variant="caption" tone="muted" style={{ textAlign: "right" }}>
+            {saveNote}
+          </Text>
+        ) : null}
       </Card>
     </Animated.View>
   );

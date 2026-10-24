@@ -2,6 +2,7 @@
 // resume metadata and chunk digests. Payloads never go here: received bytes live in sandbox
 // files (see sinks/sandbox-sink.ts).
 import * as SQLite from "expo-sqlite";
+import { migrateDatabase, privateSqliteDirectory } from "@/lib/platform/private-dir";
 import { logger } from "@/lib/utils/logger";
 
 export const DB_NAME = "droply.db";
@@ -36,7 +37,9 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
 export function openDb(): Promise<SQLite.SQLiteDatabase | null> {
   opening ??= (async () => {
     try {
-      const db = await SQLite.openDatabaseAsync(DB_NAME);
+      // iOS: out of Documents, which the Files app shows (received files live there).
+      migrateDatabase(DB_NAME);
+      const db = await SQLite.openDatabaseAsync(DB_NAME, undefined, privateSqliteDirectory() ?? undefined);
       await migrate(db);
       return db;
     } catch (error) {

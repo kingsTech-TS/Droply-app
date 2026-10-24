@@ -3,7 +3,7 @@
 // mode, incoming requests, transfers, text drop, chat, album, pairing and host controls.
 import { router, useFocusEffect } from "expo-router";
 import { ChevronDown, DoorOpen, Ellipsis, FileUp, Images, MessageSquareText, MessagesSquare, Power, Share2 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { StyleSheet, useWindowDimensions, View } from "react-native";
 import Animated, { FadeIn, FadeInDown, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -55,7 +55,8 @@ import { DeviceAvatar } from "./device-avatar";
 import { DeviceCard } from "./device-card";
 import { DiagnosticsPanel } from "./diagnostics-panel";
 import { PairRequestSheet } from "./pair-request-sheet";
-import { ConnectionBanner, ExpiryPrompt, KeepAppOpenBanner } from "./room-banners";
+import { ConnectionBanner, ExpiryPrompt, KeepAppOpenBanner, SaveFolderBanner } from "./room-banners";
+import { chooseDroplyFolder, droplyFolder, refreshDroplyFolder } from "@/lib/storage/droply-folder";
 import { RoomEnded } from "./room-ended";
 import { RoomSettings, RoomShareCard } from "./room-share-card";
 import { SpeedTestSheet } from "./speed-test-sheet";
@@ -116,6 +117,10 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
   const pairRequests = usePairRequests();
   const pairState = useLocalStore(pairing);
   const prefs = useLocalStore(preferences);
+  const saveFolder = useSyncExternalStore(droplyFolder.subscribe, droplyFolder.getSnapshot, droplyFolder.getSnapshot);
+  useEffect(() => {
+    refreshDroplyFolder();
+  }, []);
   const { name: selfName, device } = useDevice();
   const transfersAnchor = useFlightAnchor(TRANSFERS_ANCHOR);
 
@@ -552,6 +557,16 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
         {/* Rooms have no time limit; an empty room closes after a while unless kept open. */}
         <ExpiryPrompt expiresAt={alone ? room.expiresAt : null} onKeepOpen={() => session.keepAlive()} />
         <KeepAppOpenBanner show={anyActive} />
+        {prefs.autoSave && saveFolder.status === "unset" && transfers.items.some((i) => i.direction === "incoming") ? (
+          <SaveFolderBanner
+            onChoose={() =>
+              void chooseDroplyFolder().then((chosen) => {
+                // Files that arrived before the folder was chosen save now.
+                if (chosen) void session.transfers.autoSaveReady();
+              })
+            }
+          />
+        ) : null}
         {requestCards.length > 0 ? <View style={{ gap: space.md }}>{requestCards}</View> : null}
         {wide ? (
           <View style={styles.columns}>
