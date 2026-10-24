@@ -1,7 +1,7 @@
 // The two big actions (the website's drop zone + "Create an empty room to receive"), plus
 // "Host an event" and "Speed test".
 import { router } from "expo-router";
-import { ArrowDownToLine, Gauge, PartyPopper, Send } from "lucide-react-native";
+import { ArrowDownToLine, Gauge, Send } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
@@ -78,10 +78,11 @@ export function StartTiles() {
   const { info } = useDevice();
   const theme = useLocalStore(createTheme);
   const minutes = useLocalStore(createDuration);
-  const [busy, setBusy] = useState<"send" | "receive" | "event" | null>(null);
+  const [busy, setBusy] = useState<"send" | "receive" | null>(null);
   const [picking, setPicking] = useState(false);
 
-  const start = async (which: "send" | "receive" | "event", files: LocalFile[] = [], kind: RoomKind = "standard") => {
+  // Event rooms are hosted from the website; the app joins them with the code like any room.
+  const start = async (which: "send" | "receive", files: LocalFile[] = [], kind: RoomKind = "standard") => {
     if (busy) return;
     setBusy(which);
     try {
@@ -102,7 +103,6 @@ export function StartTiles() {
       <ThemePicker value={theme} onChange={(t) => createTheme.set(t)} disabled={busy !== null} />
       <DurationPicker value={minutes} onChange={(m) => createDuration.set(m)} disabled={busy !== null} />
       <View style={styles.links}>
-        <Button label="Host an event" icon={PartyPopper} size="sm" variant="ghost" onPress={() => void start("event", [], "event")} disabled={busy !== null} />
         <Button label="Speed test" icon={Gauge} size="sm" variant="ghost" onPress={() => router.push("/speed-test")} disabled={busy !== null} />
       </View>
       <AddFilesSheet visible={picking} onClose={() => setPicking(false)} title="Send files" onFiles={(files) => void start("send", files)} />

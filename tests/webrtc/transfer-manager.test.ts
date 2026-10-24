@@ -45,6 +45,9 @@ interface WorldOptions {
   /** Device ids that auto-accept everything ("My devices" rooms). */
   trustAll?: string[];
   maxRecipients?: number;
+  /** Delay before a receiver's "complete" reaches the server (ms). */
+  slowComplete?: number;
+  sinks?: SinkFactory;
 }
 
 function world(ids: string[], options: WorldOptions = {}) {
@@ -57,11 +60,11 @@ function world(ids: string[], options: WorldOptions = {}) {
       selfId: id,
       roomId: "rm_test",
       config: options.maxRecipients ? { ...TEST_CONFIG, max_recipients: options.maxRecipients } : TEST_CONFIG,
-      api: backend.apiFor(id),
+      api: options.slowComplete ? slowCompleteApi(backend.apiFor(id), options.slowComplete) : backend.apiFor(id),
       peers: network.node(id),
       send: backend.wsFor(id),
       resume: new MemoryResumeStore(),
-      sinks: memorySinks,
+      sinks: options.sinks ?? memorySinks,
       mobile: false,
       deviceName: (d) => d,
       maxActiveTransfers: options.maxActive,
@@ -77,6 +80,16 @@ function world(ids: string[], options: WorldOptions = {}) {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function slowCompleteApi(api: ReturnType<FakeBackend["apiFor"]>, delayMs: number): ReturnType<FakeBackend["apiFor"]> {
+  return {
+    ...api,
+    act: async (id, action, body) => {
+      if (action === "complete") await sleep(delayMs);
+      return api.act(id, action, body);
+    },
+  };
+}
 
 async function until(condition: () => boolean, timeoutMs = 8000, label = "condition"): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -108,6 +121,40 @@ afterEach(() => {
 });
 
 describe("TransferManager end to end", () => {
+  it("assembles a file once even when the receiver's 'complete' is slow to reach the server", async () => {
+    // Regression (web → app): the sender started the finished file again while the leg was
+    // still "transferring" on the server, and the app assembled it a second time. Like the
+    // app's real storage (the first assembly moves the file), a second finalize fails here.
+    let finalized = 0;
+    const strictSinks: SinkFactory = {
+      create: async (request) => {
+        const sink = new MemorySink(request.totalChunks);
+        const finalize = sink.finalize.bind(sink);
+        sink.finalize = async () => {
+          finalized += 1;
+          if (finalized > 1) throw new Error("already moved to its final place");
+          return finalize();
+        };
+        return sink;
+      },
+      fits: async () => true,
+    };
+    const { get } = world(["dv_aaaaaaaaaaaaaaaaaaaa", "dv_bbbbbbbbbbbbbbbbbbbb"], { slowComplete: 600, sinks: strictSinks });
+    const a = get("dv_aaaaaaaaaaaaaaaaaaaa");
+    const b = get("dv_bbbbbbbbbbbbbbbbbbbb");
+    const file = makeFile("photo.jpg", 200 * KiB + 3);
+    a.manager.send([file], [b.id]);
+    await acceptAll(b);
+    await until(() => outgoing(a)[0]?.legs[0]?.status === "completed", 8000, "sender completed");
+    await until(() => incoming(b)[0]?.save === "ready", 8000, "receiver ready");
+    await sleep(800); // room for a duplicate run to show up
+
+    expect(finalized).toBe(1);
+    expect(b.notices.some((n) => n.message.includes("Couldn't assemble"))).toBe(false);
+    expect(incoming(b)[0]?.verification).toBe("verified");
+    expect(await savedBytesOf(b, "photo.jpg")).toBe(await sha256Hex(readMem(file.uri)));
+  });
+
   it("sends one file: request → accept → P2P → verified → complete on both sides", async () => {
     const { get } = world(["dv_aaaaaaaaaaaaaaaaaaaa", "dv_bbbbbbbbbbbbbbbbbbbb"]);
     const a = get("dv_aaaaaaaaaaaaaaaaaaaa");

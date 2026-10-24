@@ -1,6 +1,6 @@
 // Mirrors app/schemas/signaling.py in the backend: every WebSocket message.
 import type { DeviceType, DeviceView, PeerInfo } from "./device";
-import type { IceServer, RoomView } from "./room";
+import type { CatalogItem, IceServer, RoomView } from "./room";
 import type { ChunkRange, TransferConfigView, TransferCreate, TransferView } from "./transfer";
 
 export type PeerConnectionStateName =
@@ -138,6 +138,8 @@ export type ClientMessage =
 
 export interface RoomStateEvent {
   type: "room_state";
+  /** Event rooms: the files the host shares (older servers omit it). */
+  catalog?: CatalogItem[];
   room: RoomView;
   self_device_id: string;
   peers: PeerInfo[];
@@ -249,7 +251,15 @@ export interface RoomEndedEvent {
   room_id: string;
 }
 
+/** Event rooms: the host shared or removed files. Holds the whole list. */
+export interface CatalogUpdatedEvent {
+  type: "catalog_updated";
+  room_id: string;
+  items: CatalogItem[];
+}
+
 export type ServerMessage =
+  | CatalogUpdatedEvent
   | RoomStateEvent
   | PeerJoinedEvent
   | PeerUpdatedEvent

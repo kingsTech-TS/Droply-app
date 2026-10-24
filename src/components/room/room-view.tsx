@@ -23,7 +23,7 @@ import { joinUrlFor } from "@/lib/utils/join-url";
 import { LocalStore } from "@/lib/utils/local-store";
 import type { TransferSnapshot } from "@/lib/webrtc/transfer-manager";
 import { isActive, totalSpeed } from "@/lib/webrtc/transfer-view";
-import { useInbox, usePairRequests, usePeerLinks, useRoom, useRoomSession, useTransfers, useUnreadChat } from "@/hooks/use-room-session";
+import { useEventCatalog, useEventRequests, useEventThumbs, useInbox, usePairRequests, usePeerLinks, useRoom, useRoomSession, useTransfers, useUnreadChat } from "@/hooks/use-room-session";
 import { useDevice } from "@/hooks/use-device";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { useTimeUp } from "@/hooks/use-time-up";
@@ -32,6 +32,7 @@ import { radius, space } from "@/theme/tokens";
 import { RadarPulse } from "@/components/motion/radar-pulse";
 import { useFlightAnchor } from "@/components/motion/effects-overlay";
 import { TRANSFERS_ANCHOR } from "@/components/session-effects";
+import { EventGallery } from "@/components/event/event-gallery";
 import { AddFilesSheet } from "@/components/transfer/add-files-sheet";
 import { IncomingCard } from "@/components/transfer/incoming-card";
 import { SaveSheet } from "@/components/transfer/save-sheet";
@@ -154,6 +155,13 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
   const deviceName = useCallback((id: string) => room.devices.find((d) => d.device_id === id)?.device_name ?? "Unknown device", [room.devices]);
   const anyActive = transfers.items.some(isActive);
   const isHost = room.hostDeviceId === room.selfId;
+  // Event rooms: the host (on the website) shares into a gallery; guests pick what they want.
+  const isEvent = room.kind === "event";
+  const eventGuest = isEvent && !isHost;
+  const catalog = useEventCatalog();
+  const eventThumbs = useEventThumbs();
+  const eventRequests = useEventRequests();
+  const requestThumbs = useCallback((ids: string[]) => session.event.requestThumbs(ids), [session]);
   const theme = THEME_STYLES[room.theme];
   const themed = room.theme !== "default";
   const wide = width >= 900;
@@ -424,6 +432,8 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
 
   const devices = alone ? (
     <WaitingForDevices name={selfName} type={device.type} />
+  ) : isEvent ? (
+    <SectionHeader title={`${room.devices.length} ${room.devices.length === 1 ? "person" : "people"} here · ${online.length + 1} online`} />
   ) : (
     <View style={{ gap: space.md }}>
       <SectionHeader title={online.length === 1 ? "1 device connected" : `${online.length} devices connected`} />
@@ -452,12 +462,36 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
     <View style={{ gap: space.lg }}>
       {!alone ? (
         <View style={styles.quick}>
-          <Button label="Send text" icon={MessageSquareText} size="sm" variant="outline" onPress={() => setTextSheet({ open: true, text: "", recipients: new Set(recipients) })} disabled={online.length === 0 || timeUp} />
+          {eventGuest ? null : (
+            <Button label="Send text" icon={MessageSquareText} size="sm" variant="outline" onPress={() => setTextSheet({ open: true, text: "", recipients: new Set(recipients) })} disabled={online.length === 0 || timeUp} />
+          )}
           <Button label={unreadChat ? `Chat (${unreadChat})` : "Chat"} icon={MessagesSquare} size="sm" variant={unreadChat ? "tinted" : "outline"} onPress={() => setChatOpen(true)} accessibilityLabel={unreadChat ? `Chat, ${unreadChat} unread` : "Chat"} />
           <Button label="Album" icon={Images} size="sm" variant="outline" onPress={() => setAlbumOpen(true)} />
         </View>
       ) : null}
-      {timeUp ? null : selection.length > 0 ? (
+      {isEvent ? (
+        eventGuest ? (
+          <EventGallery
+            items={catalog}
+            hostName={room.hostDeviceId ? deviceName(room.hostDeviceId) : "the host"}
+            thumbs={eventThumbs}
+            requests={eventRequests}
+            transfers={transferItems}
+            hostId={room.hostDeviceId}
+            onDownload={(ids) => session.event.download(ids)}
+            onRequestThumbs={requestThumbs}
+            onSave={(snapshot) => setSaving(snapshot)}
+            people={room.devices.length}
+            disabled={timeUp}
+          />
+        ) : (
+          <Card tone="muted" level={0}>
+            <Text variant="footnote" tone="muted">
+              You&apos;re now the host of this event. Sharing files with everyone is done from the website.
+            </Text>
+          </Card>
+        )
+      ) : timeUp ? null : selection.length > 0 ? (
         <SendPanel
           files={selection}
           recipients={online}
@@ -574,7 +608,7 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
       </Animated.ScrollView>
       {header}
 
-      <AddFilesSheet visible={adding} onClose={() => setAdding(false)} onFiles={addFiles} onPasteText={online.length > 0 && !timeUp ? () => setTextSheet({ open: true, text: "", recipients: new Set(recipients) }) : undefined} />
+      <AddFilesSheet visible={adding} onClose={() => setAdding(false)} onFiles={addFiles} onPasteText={online.length > 0 && !timeUp && !eventGuest ? () => setTextSheet({ open: true, text: "", recipients: new Set(recipients) }) : undefined} />
       <TextDropSheet
         visible={textSheet.open}
         onClose={() => setTextSheet((c) => ({ ...c, open: false }))}
@@ -593,7 +627,8 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
         peersOnline={online.length}
         selfId={room.selfId}
         devices={room.devices}
-        locked={timeUp}
+        locked={timeUp || eventGuest}
+        lockedReason={eventGuest && !timeUp ? "Only the host can post in an event room." : undefined}
       />
       <AddTimeSheet visible={addTimeOpen} onClose={() => setAddTimeOpen(false)} info={timeInfo} onConfirm={(minutes) => session.changeTime(minutes)} />
       <AlbumSheet
@@ -601,7 +636,7 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
         onClose={() => setAlbumOpen(false)}
         candidates={mediaCandidates as AlbumItem[]}
         deviceName={deviceName}
-        onAddPhotos={(files) => void sendFiles(files, online.map((d) => d.device_id))}
+        onAddPhotos={isEvent ? undefined : (files) => void sendFiles(files, online.map((d) => d.device_id))}
         onSave={(item) => {
           const snapshot = transferItems.find((i) => i.localId === item.localId);
           if (snapshot) setSaving(snapshot);

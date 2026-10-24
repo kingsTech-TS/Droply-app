@@ -1,6 +1,8 @@
 
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+import type { EventRequest } from "@/lib/session/event-share";
 import type { InboxMessage, PairRequest, RoomSession, RoomSnapshot } from "@/lib/session/room-session";
+import type { CatalogItem } from "@/types/room";
 import type { LinkInfo } from "@/lib/webrtc/peer-connection";
 import type { TransfersSnapshot } from "@/lib/webrtc/transfer-manager";
 
@@ -40,6 +42,24 @@ export function usePeerLinks(): Readonly<Record<string, LinkInfo>> {
 export function useInbox(): InboxMessage[] {
   const { inbox } = useRoomSession();
   return useSyncExternalStore(inbox.subscribe, inbox.getSnapshot, inbox.getSnapshot);
+}
+
+/** Event rooms: the host's shared files. */
+export function useEventCatalog(): CatalogItem[] {
+  const { event } = useRoomSession();
+  return useSyncExternalStore(event.catalog.subscribe, event.catalog.getSnapshot, event.catalog.getSnapshot);
+}
+
+/** Event guests: previews received from the host (data URLs by item id). */
+export function useEventThumbs(): Readonly<Record<string, string>> {
+  const { event } = useRoomSession();
+  return useSyncExternalStore(event.thumbs.subscribe, event.thumbs.getSnapshot, event.thumbs.getSnapshot);
+}
+
+/** Event guests: the files this device asked for. */
+export function useEventRequests(): Readonly<Record<string, EventRequest>> {
+  const { event } = useRoomSession();
+  return useSyncExternalStore(event.requests.subscribe, event.requests.getSnapshot, event.requests.getSnapshot);
 }
 
 export function useUnreadChat(): number {

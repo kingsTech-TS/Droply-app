@@ -1,5 +1,7 @@
 import type { DeviceInfoIn } from "@/types/device";
 import type {
+  CatalogItemIn,
+  CatalogView,
   NearbyRoom,
   RendezvousSession,
   RoomJoinRequest,
@@ -115,6 +117,21 @@ export function changeRoomTime(
 ): Promise<RoomView> {
   const body: RoomTimeUpdate = { duration_minutes: durationMinutes };
   return client.request<RoomView>("PATCH", `/rooms/${encodeURIComponent(roomId)}/time`, { body, token });
+}
+
+/** Event rooms: the files the host shares. */
+export function getCatalog(roomId: string, token: string, client: ApiClient = apiClient): Promise<CatalogView> {
+  return client.request<CatalogView>("GET", `/rooms/${encodeURIComponent(roomId)}/catalog`, { token, retries: 2 });
+}
+
+/** Event host only: shares files with everyone (metadata; at most 100 per call). */
+export function addToCatalog(roomId: string, items: CatalogItemIn[], token: string, client: ApiClient = apiClient): Promise<CatalogView> {
+  return client.request<CatalogView>("POST", `/rooms/${encodeURIComponent(roomId)}/catalog`, { body: { items }, token });
+}
+
+/** Event host only: stops sharing a file. */
+export function removeFromCatalog(roomId: string, itemId: string, token: string, client: ApiClient = apiClient): Promise<CatalogView> {
+  return client.request<CatalogView>("DELETE", `/rooms/${encodeURIComponent(roomId)}/catalog/${encodeURIComponent(itemId)}`, { token });
 }
 
 /** Which of these rooms are still open (needs each room's id and code). */

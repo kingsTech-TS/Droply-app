@@ -43,6 +43,7 @@ import type { DeviceUpdate, RoomStateEvent, TransferEventType } from "@/types/si
 import type { TransferConfigView } from "@/types/transfer";
 import { memoryBudget } from "@/lib/device/memory";
 import { forgetRooms, updateRememberedTheme } from "./my-rooms";
+import { EventShare } from "./event-share";
 import { clearSession, type SessionMode, type StoredSession } from "./session-store";
 
 export type RoomStatus = "connecting" | "live" | "reconnecting" | "ended";
@@ -167,6 +168,8 @@ export class RoomSession {
   readonly peers: PeerManager;
   readonly transfers: TransferManager;
   readonly messenger: PeerMessenger;
+  /** Event rooms: the host's shared files and this device's downloads. */
+  readonly event: EventShare;
   readonly mobile: boolean;
 
   private readonly ice: IceServerProvider;
@@ -244,8 +247,16 @@ export class RoomSession {
       deviceName: (id) => this.deviceName(id),
       // Only devices holding the pairing key can enter a "My devices" room.
       trustAll: session.mode === "my-devices",
+      // Event guests accept the files they picked without being asked again.
+      autoAcceptBatch: (senderId, batchId) => this.event.isRequested(senderId, batchId),
     });
     this.messenger = new PeerMessenger(this.peers);
+    this.event = new EventShare({
+      selfId: session.deviceId,
+      hostId: () => this.room.getSnapshot().hostDeviceId,
+      messenger: this.messenger,
+      notify: (notice) => this.notices.emit("notice", notice),
+    });
     this.subs.push(
       this.transfers.notices.on("notice", (notice) => this.notices.emit("notice", notice)),
       this.transfers.completions.on("completion", (c) => this.onCompletion(c)),
@@ -266,6 +277,7 @@ export class RoomSession {
       s.on("answer", (m) => void this.peers.handleAnswer(m)),
       s.on("ice_candidate", (m) => void this.peers.handleCandidate(m)),
       s.on("room_updated", ({ room }) => this.applyRoomView(room)),
+      s.on("catalog_updated", ({ items }) => this.event.setCatalog(items)),
       s.on("room_expired", () => this.endRoom("expired")),
       s.on("room_closed", () => this.endRoom("room_ended")),
       this.peers.links.subscribe(() => this.onLinksChanged()),
@@ -340,7 +352,7 @@ export class RoomSession {
   async sendText(peerIds: readonly string[], text: string): Promise<number> {
     const trimmed = text.slice(0, MAX_TEXT_MESSAGE);
     if (!trimmed.trim() || peerIds.length === 0) return 0;
-    if (this.refuseWhenTimeUp()) return 0;
+    if (this.refuseWhenTimeUp() || this.refuseEventGuest()) return 0;
     const id = randomId("t");
     const delivered = await this.messenger.broadcast(peerIds, { kind: "text", id, text: trimmed });
     this.pushInbox({ id, kind: "text", direction: "out", peerIds: delivered, text: trimmed, at: Date.now() });
@@ -356,7 +368,7 @@ export class RoomSession {
    */
   async sendChat(text: string, options: ChatSendOptions = {}): Promise<void> {
     const trimmed = text.trim().slice(0, MAX_CHAT_MESSAGE);
-    if (!trimmed || this.refuseWhenTimeUp()) return;
+    if (!trimmed || this.refuseWhenTimeUp() || this.refuseEventGuest()) return;
     const id = randomId("c");
     const peers = this.onlinePeerIds();
     const group = this.room.getSnapshot().devices.length >= CHAT_GROUP_MIN_DEVICES;
@@ -392,7 +404,7 @@ export class RoomSession {
 
   /** Adds or removes this device's reaction on a chat message, for everyone in the room. */
   async reactToChat(messageId: string, emoji: Reaction): Promise<void> {
-    if (this.refuseWhenTimeUp()) return;
+    if (this.refuseWhenTimeUp() || this.refuseEventGuest()) return;
     const message = this.inbox.getSnapshot().find((m) => m.id === messageId && m.kind === "chat");
     if (!message) return;
     const on = !(message.reactions?.[emoji] ?? []).includes(this.session.deviceId);
@@ -504,6 +516,7 @@ export class RoomSession {
 
   private onRoomState(event: RoomStateEvent): void {
     this.ice.setStun(event.ice_servers);
+    if (event.catalog) this.event.setCatalog(event.catalog);
     this.transfers.setConfig(event.transfer_config);
     for (const peer of event.peers) this.peers.setPolite(peer.device_id, peer.polite);
     const devices = event.room.devices;
@@ -610,7 +623,24 @@ export class RoomSession {
     }
   }
 
+  /** Event rooms: only the host posts (texts, chat); everyone else receives. */
+  get eventGuest(): boolean {
+    return this.room.getSnapshot().kind === "event" && !this.isHost;
+  }
+
+  private refuseEventGuest(): boolean {
+    if (!this.eventGuest) return false;
+    this.notices.emit("notice", { kind: "info", message: "Only the host can share in an event room." });
+    return true;
+  }
+
   private onAppMessage(peerId: string, message: AppMessage): void {
+    if (this.event.handle(peerId, message)) return;
+    const room = this.room.getSnapshot();
+    // In event rooms, texts and chat only come from the host.
+    if (room.kind === "event" && peerId !== room.hostDeviceId && (message.kind === "text" || message.kind === "chat" || message.kind === "chat_reaction")) {
+      return;
+    }
     switch (message.kind) {
       case "text":
         this.pushInbox({ id: message.id, kind: "text", direction: "in", peerIds: [peerId], text: message.text, at: Date.now() });

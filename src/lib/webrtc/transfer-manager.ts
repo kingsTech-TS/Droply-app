@@ -168,6 +168,8 @@ export interface TransferManagerOptions {
   maxActiveTransfers?: number;
   /** Auto-accept from everyone (a "My devices" room: only paired devices can be in it). */
   trustAll?: boolean;
+  /** Auto-accept a sender's batch this device asked for (event rooms: files a guest picked). */
+  autoAcceptBatch?: (senderId: string, batchId: string) => boolean;
 }
 
 // --- internal records ---------------------------------------------------------------
@@ -183,6 +185,11 @@ interface OutLeg {
   autoResume: boolean;
   /** An action request for this leg is in flight (avoid duplicates). */
   busy: boolean;
+  /**
+   * The receiver verified the whole file; the leg stays "transferring" until the receiver's
+   * "complete" reaches the server. It must not be sent again in that gap.
+   */
+  delivered?: boolean;
 }
 
 interface OutgoingRecord {
@@ -210,6 +217,8 @@ interface OutgoingRecord {
 
 interface IncomingRecord {
   kind: "incoming";
+  /** Finishing (assembling) has started; it runs once. */
+  completing?: boolean;
   transferId: string;
   senderId: string;
   batchId: string;
@@ -341,8 +350,11 @@ export class TransferManager {
 
   // --- sending ----------------------------------------------------------------------
 
-  /** Queues files for the given recipients. Returns how many files were accepted. */
-  send(files: readonly LocalFile[], recipientIds: readonly string[]): number {
+  /**
+   * Queues files for the given recipients. Returns how many files were accepted. `batchId`
+   * groups them as the recipient sees them (event rooms: the id of the guest's request).
+   */
+  send(files: readonly LocalFile[], recipientIds: readonly string[], options: { batchId?: string } = {}): number {
     const recipients = [...new Set(recipientIds)];
     if (recipients.length === 0 || files.length === 0) return 0;
     const empty = files.filter((f) => f.size === 0).length;
@@ -354,7 +366,7 @@ export class TransferManager {
     const groupSize = Math.max(1, this.config.max_recipients);
     const groups: string[][] = [];
     for (let i = 0; i < recipients.length; i += groupSize) groups.push(recipients.slice(i, i + groupSize));
-    const batchId = randomId("b_");
+    const batchId = options.batchId ?? randomId("b_");
     let count = 0;
     for (const file of files) {
       if (file.size === 0) continue;
@@ -786,6 +798,9 @@ export class TransferManager {
   onPeerPresent(peerId: string): void {
     for (const record of this.outgoing.values()) {
       const leg = record.legs.get(peerId);
+      // The device came back: if its "complete" never reached the server, let it finish now
+      // (the receiver answers a repeat without assembling the file again).
+      if (leg?.delivered) leg.delivered = false;
       if (leg && leg.autoResume && (leg.status === "paused" || SENDABLE.has(leg.status))) this.holdLeg(leg);
     }
     this.pumpStarts();
@@ -969,6 +984,8 @@ export class TransferManager {
       }
       const previous = leg.status;
       leg.status = legView.status;
+      // Anything but "transferring" (completed, or a retry after a problem) ends the wait.
+      if (leg.status !== "transferring") leg.delivered = false;
       leg.failureReason = legView.failure_reason;
       const affected = !event || event.device_ids.length === 0 || event.device_ids.includes(leg.deviceId);
       if (affected && event?.type === "transfer_paused") {
@@ -1064,7 +1081,7 @@ export class TransferManager {
           continue;
         }
         const wants = SENDABLE.has(leg.status) || (leg.status === "paused" && leg.autoResume);
-        if (!wants || leg.busy) continue;
+        if (!wants || leg.busy || leg.delivered) continue;
         this.holdLeg(leg);
         if (!this.options.peers.transportFor(leg.deviceId)) {
           if (leg.status === "accepted") void this.act(record, leg, "connect");
@@ -1139,6 +1156,10 @@ export class TransferManager {
     leg.meter.setActive(false);
     if (this.disposed) return;
     switch (result.kind) {
+      case "done":
+        // Wait for the receiver's "complete" instead of starting the file over.
+        leg.delivered = true;
+        break;
       case "interrupted":
         // The link dropped. Pause on the server so the leg can resume from the gaps.
         if (leg.status === "transferring") {
@@ -1303,7 +1324,8 @@ export class TransferManager {
       this.lastRequestKey.set(record.senderId, { key, at: now });
     }
     record.batchId = key;
-    if (this.trusted.has(record.senderId) || this.options.trustAll) {
+    const requested = batch !== null && batch !== undefined && this.options.autoAcceptBatch?.(record.senderId, batch) === true;
+    if (requested || this.trusted.has(record.senderId) || this.options.trustAll) {
       void this.acceptIncoming(record, null);
       return;
     }
@@ -1548,6 +1570,10 @@ export class TransferManager {
   }
 
   private async completeIncoming(record: IncomingRecord): Promise<void> {
+    // Once per file: a duplicate run (the sender started the finished file again) would
+    // assemble it a second time, fail, and wrongly mark it as failed.
+    if (record.completing) return;
+    record.completing = true;
     record.verification = "verified";
     record.save = "preparing";
     this.publish();

@@ -95,6 +95,9 @@ export const MAX_TEXT_MESSAGE = 64 * 1024;
 export const MAX_CHAT_MESSAGE = 2000;
 
 export const MAX_REPLY_QUOTE = 200;
+export const MAX_THUMB_REQUEST = 24;
+/** Previews are small JPEGs; anything larger is dropped. */
+export const MAX_THUMB_DATA = 96 * 1024;
 export const MAX_MENTIONS = 50;
 
 /** The chat message being replied to, quoted so it shows even if the receiver missed it. */
@@ -111,6 +114,15 @@ export type AppMessage =
   // Adds (`on`) or removes this device's reaction on a chat message; sent to everyone.
   | { kind: "chat_reaction"; messageId: string; emoji: Reaction; on: boolean }
   | { kind: "reaction"; transferId: string; emoji: Reaction }
+  // Event rooms. Guest → host: send me this shared file, as a transfer with `requestId` as
+  // its batch id (so this guest accepts it without asking).
+  | { kind: "event_get"; itemId: string; requestId: string }
+  // Guest → host: previews of these shared files, please.
+  | { kind: "event_thumbs"; itemIds: string[] }
+  // Host → guest: a small JPEG preview (data URL).
+  | { kind: "event_thumb"; itemId: string; data: string }
+  // Host → guest: this file isn't available any more (e.g. the host reloaded the page).
+  | { kind: "event_unavailable"; itemId: string }
   // Pairing ("My devices"): the requester shares its group key over the encrypted channel.
   | { kind: "pair_request"; key: string; name: string }
   | { kind: "pair_accept"; name: string }
@@ -144,6 +156,18 @@ function parseApp(value: unknown): AppMessage | null {
       }
       return chat;
     }
+    case "event_get":
+      return isId(m.itemId) && isId(m.requestId) ? { kind: "event_get", itemId: m.itemId, requestId: m.requestId } : null;
+    case "event_thumbs":
+      return Array.isArray(m.itemIds) && m.itemIds.length <= MAX_THUMB_REQUEST && m.itemIds.every(isId)
+        ? { kind: "event_thumbs", itemIds: m.itemIds as string[] }
+        : null;
+    case "event_thumb":
+      return isId(m.itemId) && isStr(m.data, MAX_THUMB_DATA, 1) && (m.data as string).startsWith("data:image/jpeg;base64,")
+        ? { kind: "event_thumb", itemId: m.itemId, data: m.data as string }
+        : null;
+    case "event_unavailable":
+      return isId(m.itemId) ? { kind: "event_unavailable", itemId: m.itemId } : null;
     case "chat_reaction":
       return isId(m.messageId) && (REACTIONS as readonly unknown[]).includes(m.emoji) && typeof m.on === "boolean"
         ? { kind: "chat_reaction", messageId: m.messageId, emoji: m.emoji as Reaction, on: m.on }

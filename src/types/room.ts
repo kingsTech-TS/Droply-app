@@ -44,6 +44,29 @@ export interface RoomSettingsUpdate {
   theme?: RoomTheme;
 }
 
+/** Event rooms: a file the host shares. Metadata only; the bytes come from the host's device. */
+export interface CatalogItem {
+  item_id: string;
+  name: string;
+  size: number;
+  mime_type: string;
+  /** Folder path inside a shared folder ("photos/day 1"), or null. */
+  folder: string | null;
+  added_at: string;
+}
+
+export interface CatalogItemIn {
+  item_id: string;
+  name: string;
+  size: number;
+  mime_type: string;
+  folder?: string | null;
+}
+
+export interface CatalogView {
+  items: CatalogItem[];
+}
+
 export interface RendezvousRequest {
   key: string;
   device: DeviceInfoIn;

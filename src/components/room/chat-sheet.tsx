@@ -32,9 +32,11 @@ export interface ChatSheetProps {
   devices: DeviceView[];
   /** The room's time is up: nothing new can be sent. */
   locked?: boolean;
+  /** Shown in place of the message box text while locked. */
+  lockedReason?: string;
 }
 
-export function ChatSheet({ visible, onClose, messages, deviceName, onSend, onReact, peersOnline, selfId, devices, locked = false }: ChatSheetProps) {
+export function ChatSheet({ visible, onClose, messages, deviceName, onSend, onReact, peersOnline, selfId, devices, locked = false, lockedReason }: ChatSheetProps) {
   const { colors } = useTheme();
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -145,7 +147,7 @@ export function ChatSheet({ visible, onClose, messages, deviceName, onSend, onRe
   };
 
   const placeholder = locked
-    ? "Time's up. The chat is closed."
+    ? (lockedReason ?? "Time's up. The chat is closed.")
     : peersOnline === 0
       ? "Waiting for other devices…"
       : group

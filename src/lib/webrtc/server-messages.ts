@@ -36,6 +36,10 @@ function isRoom(value: unknown): boolean {
   );
 }
 
+function isCatalogItem(value: unknown): boolean {
+  return isObj(value) && str(value, "item_id") && str(value, "name") && num(value, "size") && str(value, "mime_type");
+}
+
 function isRange(value: unknown): boolean {
   return (
     Array.isArray(value) &&
@@ -89,7 +93,8 @@ function isValid(o: Obj): boolean {
         o.peers.every((p) => isDevice(p) && isObj(p) && typeof p.polite === "boolean") &&
         Array.isArray(o.ice_servers) &&
         isObj(o.transfer_config) &&
-        num(o, "heartbeat_seconds")
+        num(o, "heartbeat_seconds") &&
+        (o.catalog === undefined || (Array.isArray(o.catalog) && o.catalog.every(isCatalogItem)))
       );
     case "peer_joined":
     case "peer_updated":
@@ -117,6 +122,8 @@ function isValid(o: Obj): boolean {
       return str(o, "room_id");
     case "room_updated":
       return isRoom(o.room);
+    case "catalog_updated":
+      return str(o, "room_id") && Array.isArray(o.items) && o.items.every(isCatalogItem);
     default:
       return (
         typeof o.type === "string" &&

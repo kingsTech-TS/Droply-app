@@ -72,7 +72,8 @@ export interface AlbumSheetProps {
   onClose: () => void;
   candidates: AlbumItem[];
   deviceName: (id: string) => string;
-  onAddPhotos: (files: LocalFile[]) => void;
+  /** Omitted where this device can't send (event guests). */
+  onAddPhotos?: (files: LocalFile[]) => void;
   onSave: (item: AlbumItem) => void;
   onSaveAll: () => void;
 }
@@ -105,7 +106,7 @@ export function AlbumSheet({ visible, onClose, candidates, deviceName, onAddPhot
             variant="secondary"
             onPress={() =>
               void pickFrom("media").then((files) => {
-                if (files.length) onAddPhotos(files);
+                if (files.length) onAddPhotos?.(files);
               })
             }
           />
