@@ -8,10 +8,6 @@ export const ROOM_KINDS = ["standard", "event"] as const;
 export type RoomKind = (typeof ROOM_KINDS)[number];
 export const ROOM_THEMES = ["default", "party", "birthday", "wedding", "gaming", "study", "ocean", "sunset"] as const;
 export type RoomTheme = (typeof ROOM_THEMES)[number];
-/** Timed rooms: the creator picks the length; the host may add time once, up to the max. */
-export const ROOM_MIN_MINUTES = 5;
-export const ROOM_MAX_MINUTES = 20;
-export const ROOM_DEFAULT_MINUTES = 10;
 
 export interface IceServer {
   urls: string[];
@@ -29,13 +25,6 @@ export interface RoomCreateRequest {
   device: DeviceInfoIn;
   kind?: RoomKind;
   theme?: RoomTheme;
-  /** How long the room stays open (ROOM_MIN_MINUTES to ROOM_MAX_MINUTES). */
-  duration_minutes?: number;
-}
-
-/** Host only, once per room: the new total length (longer than the current one). */
-export interface RoomTimeUpdate {
-  duration_minutes: number;
 }
 
 /** Host-only settings; omitted fields are unchanged. */
@@ -119,11 +108,9 @@ export interface RoomView {
   kind: RoomKind;
   discoverable: boolean;
   theme: RoomTheme;
-  /** Length chosen by the creator; null = sliding expiry (paired devices, personal links). */
+  /** Rooms created before rooms lost their time limit; always null now. */
   duration_seconds?: number | null;
-  /** The host already changed the time; it can't change again. */
   time_extended?: boolean;
-  /** Time is up: running transfers finish, nothing new can start, then the room ends. */
   wrapping_up?: boolean;
 }
 

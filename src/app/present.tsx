@@ -12,7 +12,6 @@ import { joinUrlFor } from "@/lib/utils/join-url";
 import { useTheme } from "@/theme/theme-provider";
 import { space, type } from "@/theme/tokens";
 import { QrCode } from "@/components/room/qr-code";
-import { RoomCountdown } from "@/components/room/room-banners";
 import { IconButton } from "@/components/ui/icon-button";
 import { Text } from "@/components/ui/text";
 
@@ -59,7 +58,6 @@ export default function PresentScreen() {
       <Text tone="muted" center>
         {room.devices.length === 1 ? "1 device joined" : `${room.devices.length} devices joined`} · or open {joinUrl.replace(/^https?:\/\//, "").replace(/\/join\/.*/, "")}
       </Text>
-      <RoomCountdown expiresAt={room.expiresAt} />
       <View style={{ position: "absolute", top: insets.top + space.sm, right: space.lg }}>
         <IconButton icon={X} label="Close" variant="filled" onPress={() => router.back()} />
       </View>

@@ -170,6 +170,16 @@ export interface TransferManagerOptions {
   trustAll?: boolean;
   /** Auto-accept a sender's batch this device asked for (event rooms: files a guest picked). */
   autoAcceptBatch?: (senderId: string, batchId: string) => boolean;
+  /**
+   * Where accepted files are written when no folder was chosen for them (the "Droply" folder,
+   * on browsers that allow it), or null for the normal temporary storage.
+   */
+  defaultDirectory?: () => Promise<DirectoryHandleLike | null>;
+  /**
+   * Saves a finished file by itself (no Save button): returns true once it is saved. Called
+   * only for files not already written to a folder.
+   */
+  autoSave?: (file: LocalFile, fileName: string, folderPath: string | null) => Promise<boolean>;
 }
 
 // --- internal records ---------------------------------------------------------------
@@ -1348,6 +1358,7 @@ export class TransferManager {
 
   private async acceptIncoming(record: IncomingRecord, directory: DirectoryHandleLike | null): Promise<void> {
     if (record.status !== "pending") return;
+    directory ??= (await this.options.defaultDirectory?.().catch(() => null)) ?? null;
     record.directory = directory;
     record.sinkKind = directory ? "fs-access" : null;
     const now = Date.now();
@@ -1586,6 +1597,7 @@ export class TransferManager {
         if (stored) await this.options.resume.saveLeg({ ...stored, finalUri: file.uri, updatedAt: Date.now() });
       }
       record.save = file ? "ready" : "saved";
+      if (file) await this.tryAutoSave(record, file);
       this.completions.emit("completion", {
         direction: "incoming",
         batchId: record.batchId,
@@ -1607,6 +1619,20 @@ export class TransferManager {
     this.releaseIncoming(record);
     this.notifyIncomingBatch(record.batchId);
     this.publish();
+  }
+
+  /** Saves a finished file without the Save button, when this device is set up to. */
+  private async tryAutoSave(record: IncomingRecord, file: LocalFile): Promise<void> {
+    if (!this.options.autoSave) return;
+    try {
+      if (await this.options.autoSave(file, record.fileName, record.relativePath ?? null)) {
+        record.save = "saved";
+        // Like a manual save: the temporary copy goes once the save has had time to read it.
+        setTimeout(() => void this.cleanupIncoming(record), 120_000);
+      }
+    } catch (error) {
+      logger.warn("transfer", "automatic save failed", String(error));
+    }
   }
 
   private notifyIncomingBatch(batchId: string): void {

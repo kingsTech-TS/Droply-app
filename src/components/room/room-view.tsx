@@ -26,7 +26,6 @@ import { isActive, totalSpeed } from "@/lib/webrtc/transfer-view";
 import { useEventCatalog, useEventRequests, useEventThumbs, useInbox, usePairRequests, usePeerLinks, useRoom, useRoomSession, useTransfers, useUnreadChat } from "@/hooks/use-room-session";
 import { useDevice } from "@/hooks/use-device";
 import { useLocalStore } from "@/hooks/use-local-store";
-import { useTimeUp } from "@/hooks/use-time-up";
 import { useTheme } from "@/theme/theme-provider";
 import { radius, space } from "@/theme/tokens";
 import { RadarPulse } from "@/components/motion/radar-pulse";
@@ -56,10 +55,9 @@ import { DeviceAvatar } from "./device-avatar";
 import { DeviceCard } from "./device-card";
 import { DiagnosticsPanel } from "./diagnostics-panel";
 import { PairRequestSheet } from "./pair-request-sheet";
-import { ConnectionBanner, ExpiryPrompt, HeaderTimer, KeepAppOpenBanner, TimedRoomEndingPrompt, TimeUpBanner } from "./room-banners";
+import { ConnectionBanner, ExpiryPrompt, KeepAppOpenBanner } from "./room-banners";
 import { RoomEnded } from "./room-ended";
 import { RoomSettings, RoomShareCard } from "./room-share-card";
-import { AddTimeSheet, addTimeBlocked, RoomTimeSettings, type RoomTimeInfo } from "./room-time";
 import { SpeedTestSheet } from "./speed-test-sheet";
 import { TextDropSheet, TextInbox } from "./text-drop";
 
@@ -130,7 +128,6 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
   const [chatOpen, setChatOpen] = useState(false);
   const [albumOpen, setAlbumOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [addTimeOpen, setAddTimeOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [speedTestPeer, setSpeedTestPeer] = useState<string | null>(null);
@@ -165,11 +162,6 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
   const theme = THEME_STYLES[room.theme];
   const themed = room.theme !== "default";
   const wide = width >= 900;
-  // Timed rooms: once time is up, files already moving finish but nothing new is sent.
-  const timed = room.durationSeconds !== null;
-  const timeUp = useTimeUp(room.expiresAt, timed, room.wrappingUp);
-  const timeInfo: RoomTimeInfo = { createdAt: room.createdAt, durationSeconds: room.durationSeconds, timeExtended: room.timeExtended };
-  const addTimeLocked = addTimeBlocked(timeInfo);
 
   // The room's theme colors the whole app while this screen is in front (website parity).
   useFocusEffect(
@@ -218,10 +210,6 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
   const sendFiles = useCallback(
     async (files: LocalFile[], to: string[]) => {
       if (files.length === 0 || to.length === 0) return 0;
-      if (session.timeUp()) {
-        toast.warning("Time's up for this room. Nothing new can be sent.");
-        return 0;
-      }
       let prepared = files;
       if (prefs.sendSmallerPhotos) {
         setPreparing(true);
@@ -260,7 +248,6 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
   }, [autoSendKey]);
 
   const sendTo = (deviceId: string) => {
-    if (timeUp) return;
     setChosen(new Set([deviceId]));
     if (selection.length === 0) setAdding(true);
   };
@@ -370,7 +357,6 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
             <Text variant="caption" tone="muted">
               {alone ? "Waiting for devices" : online.length === 1 ? "1 device connected" : `${online.length} devices connected`}
             </Text>
-            {timed && room.expiresAt !== null && room.status !== "ended" ? <HeaderTimer expiresAt={room.expiresAt} wrappingUp={room.wrappingUp} /> : null}
           </View>
         </View>
         {room.status !== "ended" ? <IconButton icon={Ellipsis} label="Room menu" onPress={() => setMenuOpen(true)} /> : <View style={{ width: 48 }} />}
@@ -412,18 +398,15 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
     <RoomShareCard
       code={room.roomCode}
       joinUrl={joinUrl}
-      expiresAt={room.expiresAt}
-      wrappingUp={room.wrappingUp}
       open={shareOpen}
       onOpenChange={(open) => setShareChoice({ open, alone })}
       settings={
-        isHost && !timeUp ? (
+        isHost ? (
           <RoomSettings
             theme={room.theme}
             discoverable={room.discoverable}
             onTheme={(t) => session.setTheme(t)}
             onDiscoverable={(v) => session.setDiscoverable(v)}
-            time={timed ? <RoomTimeSettings info={timeInfo} onAddTime={() => setAddTimeOpen(true)} /> : undefined}
           />
         ) : undefined
       }
@@ -446,9 +429,9 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
             isSelf={self}
             link={links[d.device_id]}
             paired={pairedNames.has(d.device_name)}
-            onSend={self || timeUp ? undefined : () => sendTo(d.device_id)}
-            onSendText={self || timeUp ? undefined : () => setTextSheet({ open: true, text: "", recipients: new Set([d.device_id]) })}
-            onSpeedTest={self || timeUp ? undefined : () => setSpeedTestPeer(d.device_id)}
+            onSend={self ? undefined : () => sendTo(d.device_id)}
+            onSendText={self ? undefined : () => setTextSheet({ open: true, text: "", recipients: new Set([d.device_id]) })}
+            onSpeedTest={self ? undefined : () => setSpeedTestPeer(d.device_id)}
             onPair={self ? undefined : () => void session.requestPairing(d.device_id)}
             onRetry={self ? undefined : (relayOnly) => session.retryPeer(d.device_id, relayOnly)}
             onRemove={!self && isHost ? () => void removeDevice(d.device_id) : undefined}
@@ -463,7 +446,7 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
       {!alone ? (
         <View style={styles.quick}>
           {eventGuest ? null : (
-            <Button label="Send text" icon={MessageSquareText} size="sm" variant="outline" onPress={() => setTextSheet({ open: true, text: "", recipients: new Set(recipients) })} disabled={online.length === 0 || timeUp} />
+            <Button label="Send text" icon={MessageSquareText} size="sm" variant="outline" onPress={() => setTextSheet({ open: true, text: "", recipients: new Set(recipients) })} disabled={online.length === 0} />
           )}
           <Button label={unreadChat ? `Chat (${unreadChat})` : "Chat"} icon={MessagesSquare} size="sm" variant={unreadChat ? "tinted" : "outline"} onPress={() => setChatOpen(true)} accessibilityLabel={unreadChat ? `Chat, ${unreadChat} unread` : "Chat"} />
           <Button label="Album" icon={Images} size="sm" variant="outline" onPress={() => setAlbumOpen(true)} />
@@ -482,7 +465,6 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
             onRequestThumbs={requestThumbs}
             onSave={(snapshot) => setSaving(snapshot)}
             people={room.devices.length}
-            disabled={timeUp}
           />
         ) : (
           <Card tone="muted" level={0}>
@@ -491,7 +473,7 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
             </Text>
           </Card>
         )
-      ) : timeUp ? null : selection.length > 0 ? (
+      ) : selection.length > 0 ? (
         <SendPanel
           files={selection}
           recipients={online}
@@ -567,17 +549,8 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
           </View>
         ) : null}
         <ConnectionBanner room={room} onRetry={() => session.retryConnection()} />
-        {timed ? (
-          <TimedRoomEndingPrompt
-            expiresAt={room.expiresAt}
-            timeUp={timeUp}
-            onAddTime={isHost && addTimeLocked === null ? () => setAddTimeOpen(true) : undefined}
-            lockedReason={isHost ? addTimeLocked : null}
-          />
-        ) : (
-          <ExpiryPrompt expiresAt={alone ? room.expiresAt : null} onKeepOpen={() => session.keepAlive()} />
-        )}
-        <TimeUpBanner show={timeUp} transfersRunning={anyActive} />
+        {/* Rooms have no time limit; an empty room closes after a while unless kept open. */}
+        <ExpiryPrompt expiresAt={alone ? room.expiresAt : null} onKeepOpen={() => session.keepAlive()} />
         <KeepAppOpenBanner show={anyActive} />
         {requestCards.length > 0 ? <View style={{ gap: space.md }}>{requestCards}</View> : null}
         {wide ? (
@@ -608,7 +581,7 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
       </Animated.ScrollView>
       {header}
 
-      <AddFilesSheet visible={adding} onClose={() => setAdding(false)} onFiles={addFiles} onPasteText={online.length > 0 && !timeUp && !eventGuest ? () => setTextSheet({ open: true, text: "", recipients: new Set(recipients) }) : undefined} />
+      <AddFilesSheet visible={adding} onClose={() => setAdding(false)} onFiles={addFiles} onPasteText={online.length > 0 && !eventGuest ? () => setTextSheet({ open: true, text: "", recipients: new Set(recipients) }) : undefined} />
       <TextDropSheet
         visible={textSheet.open}
         onClose={() => setTextSheet((c) => ({ ...c, open: false }))}
@@ -627,10 +600,9 @@ export function RoomView({ speedTest = false }: { speedTest?: boolean }) {
         peersOnline={online.length}
         selfId={room.selfId}
         devices={room.devices}
-        locked={timeUp || eventGuest}
-        lockedReason={eventGuest && !timeUp ? "Only the host can post in an event room." : undefined}
+        locked={eventGuest}
+        lockedReason={eventGuest ? "Only the host can post in an event room." : undefined}
       />
-      <AddTimeSheet visible={addTimeOpen} onClose={() => setAddTimeOpen(false)} info={timeInfo} onConfirm={(minutes) => session.changeTime(minutes)} />
       <AlbumSheet
         visible={albumOpen}
         onClose={() => setAlbumOpen(false)}

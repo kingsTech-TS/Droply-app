@@ -147,7 +147,7 @@ export function ChatSheet({ visible, onClose, messages, deviceName, onSend, onRe
   };
 
   const placeholder = locked
-    ? (lockedReason ?? "Time's up. The chat is closed.")
+    ? (lockedReason ?? "The chat is closed.")
     : peersOnline === 0
       ? "Waiting for other devices…"
       : group

@@ -13,15 +13,13 @@ import { findSessionByCode, loadSession, saveSession, toStoredSession, type Sess
 export interface StartOptions {
   kind?: RoomKind;
   theme?: RoomTheme;
-  /** Timed room length (ROOM_MIN_MINUTES to ROOM_MAX_MINUTES); null lets the server decide. */
-  durationMinutes?: number | null;
   files?: LocalFile[];
   text?: string | null;
 }
 
 /** Creates a room (optionally with files to send) and returns its id. */
 export async function startRoom(device: DeviceInfoIn, options: StartOptions = {}): Promise<string> {
-  const session = await createRoom(device, undefined, options.kind ?? "standard", options.theme ?? "default", options.durationMinutes ?? null);
+  const session = await createRoom(device, undefined, options.kind ?? "standard", options.theme ?? "default");
   saveSession(toStoredSession(session));
   rememberRoom(session);
   setPendingFiles(options.files ?? []);

@@ -11,7 +11,7 @@ const SAFETY = [
   "WebRTC encrypts every transfer in transit (DTLS).",
   "Nobody can send you files without your approval, unless you choose to auto-accept a device.",
   "Every chunk is checked with SHA-256, so a corrupted file is never reported as complete.",
-  "Rooms expire automatically. Received files are saved to your device and never opened automatically.",
+  "Rooms stay open until the host closes them, or close by themselves once nobody has used them for a while. Received files are saved to your device and never opened automatically.",
 ];
 
 export default function AboutScreen() {

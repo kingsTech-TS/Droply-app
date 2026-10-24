@@ -1,5 +1,4 @@
 import { findMentions } from "@/lib/chat/mentions";
-import { addTimeBlocked } from "@/lib/rooms/time";
 import { clearRoomHistory, recordRoomEnded, recordRoomEntered, roomHistory, updateRoomHistory } from "@/lib/history/rooms";
 import { parseCtl } from "@/lib/webrtc/protocol";
 
@@ -57,15 +56,6 @@ describe("findMentions", () => {
   it("ignores names that are only a prefix of a word", () => {
     expect(findMentions("@Phones are great", devices)).toEqual([]);
     expect(findMentions("no tags here", devices)).toEqual([]);
-  });
-});
-
-describe("adding room time", () => {
-  it("is allowed once, below the maximum", () => {
-    expect(addTimeBlocked({ createdAt: 0, durationSeconds: 600, timeExtended: false })).toBeNull();
-    expect(addTimeBlocked({ createdAt: 0, durationSeconds: 600, timeExtended: true })).toMatch(/already/);
-    expect(addTimeBlocked({ createdAt: 0, durationSeconds: 1200, timeExtended: false })).toMatch(/maximum/);
-    expect(addTimeBlocked({ createdAt: 0, durationSeconds: null, timeExtended: false })).toMatch(/no time limit/);
   });
 });
 

@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { PressableScale } from "@/components/ui/pressable-scale";
 import { Text } from "@/components/ui/text";
 import { toast } from "@/components/ui/toast";
-import { createDuration, DurationPicker } from "./duration-picker";
 import { goToRoom } from "./home-sections";
 import { createTheme, ThemePicker } from "./theme-picker";
 
@@ -77,7 +76,6 @@ function Tile({
 export function StartTiles() {
   const { info } = useDevice();
   const theme = useLocalStore(createTheme);
-  const minutes = useLocalStore(createDuration);
   const [busy, setBusy] = useState<"send" | "receive" | null>(null);
   const [picking, setPicking] = useState(false);
 
@@ -86,7 +84,7 @@ export function StartTiles() {
     if (busy) return;
     setBusy(which);
     try {
-      goToRoom(await startRoom(info(), { files, kind, theme, durationMinutes: minutes }));
+      goToRoom(await startRoom(info(), { files, kind, theme }));
     } catch (error) {
       toast.error(userMessage(error));
     } finally {
@@ -101,7 +99,6 @@ export function StartTiles() {
         <Tile title="Receive" subtitle="Open a room for others" icon={ArrowDownToLine} busy={busy === "receive"} onPress={() => void start("receive")} />
       </View>
       <ThemePicker value={theme} onChange={(t) => createTheme.set(t)} disabled={busy !== null} />
-      <DurationPicker value={minutes} onChange={(m) => createDuration.set(m)} disabled={busy !== null} />
       <View style={styles.links}>
         <Button label="Speed test" icon={Gauge} size="sm" variant="ghost" onPress={() => router.push("/speed-test")} disabled={busy !== null} />
       </View>

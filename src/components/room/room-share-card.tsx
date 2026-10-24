@@ -22,7 +22,6 @@ import { SwitchRow } from "@/components/ui/switch-row";
 import { Text } from "@/components/ui/text";
 import { toast } from "@/components/ui/toast";
 import { QrCode } from "./qr-code";
-import { RoomCountdown } from "./room-banners";
 
 function CopyButton({ label, value, icon }: { label: string; value: string; icon: typeof Copy }) {
   const [copied, setCopied] = useState(false);
@@ -52,14 +51,11 @@ export function RoomSettings({
   discoverable,
   onTheme,
   onDiscoverable,
-  time,
 }: {
   theme: RoomTheme;
   discoverable: boolean;
   onTheme: (t: RoomTheme) => Promise<void>;
   onDiscoverable: (v: boolean) => Promise<void>;
-  /** Room time (timed rooms). */
-  time?: ReactNode;
 }) {
   const { colors } = useTheme();
   const [busy, setBusy] = useState(false);
@@ -75,7 +71,6 @@ export function RoomSettings({
   };
   return (
     <View style={{ gap: space.md, alignSelf: "stretch" }}>
-      {time}
       <Text variant="overline" tone="muted">
         Room theme
       </Text>
@@ -115,15 +110,12 @@ export function RoomSettings({
 export interface RoomShareCardProps {
   code: string;
   joinUrl: string;
-  expiresAt: number | null;
-  /** Timed room whose time is up, finishing its last transfers. */
-  wrappingUp?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   settings?: ReactNode;
 }
 
-export function RoomShareCard({ code, joinUrl, expiresAt, wrappingUp = false, open, onOpenChange, settings }: RoomShareCardProps) {
+export function RoomShareCard({ code, joinUrl, open, onOpenChange, settings }: RoomShareCardProps) {
   const { colors } = useTheme();
   const chevron = useAnimatedStyle(() => ({ transform: [{ rotate: withTiming(open ? "180deg" : "0deg", { duration: 200 }) }] }));
   const invite = async () => {
@@ -187,7 +179,6 @@ export function RoomShareCard({ code, joinUrl, expiresAt, wrappingUp = false, op
               <Button label="Invite" icon={Share2} size="sm" variant="secondary" onPress={() => void invite()} />
               <Button label="Present" icon={Maximize} size="sm" variant="outline" onPress={() => router.push("/present")} />
             </View>
-            <RoomCountdown expiresAt={expiresAt} wrappingUp={wrappingUp} />
             {settings ? <View style={[styles.settings, { borderTopColor: colors.border }]}>{settings}</View> : null}
           </Animated.View>
         ) : null}

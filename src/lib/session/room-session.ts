@@ -5,7 +5,7 @@ import NetInfo from "@react-native-community/netinfo";
 import { AppState, type AppStateStatus } from "react-native";
 import { env } from "@/config/env";
 import { leaveRoom } from "@/lib/api/devices";
-import { changeRoomTime, closeRoom, getRoom, updateRoomSettings } from "@/lib/api/rooms";
+import { closeRoom, getRoom, updateRoomSettings } from "@/lib/api/rooms";
 import { isApiError, userMessage } from "@/lib/api/errors";
 import { createTransfer, getTransfer, transferAction } from "@/lib/api/transfers";
 import { detectDevice } from "@/lib/device/detection";
@@ -55,17 +55,10 @@ export interface RoomSnapshot {
   selfId: string;
   hostDeviceId: string | null;
   /**
-   * When the room ends (ms since epoch). Timed rooms: fixed unless the host adds time.
-   * Other rooms: sliding, the server extends it while devices are active.
+   * When an idle room closes (ms since epoch). Rooms have no time limit: the server moves this
+   * forward while devices are active.
    */
   expiresAt: number | null;
-  createdAt: number | null;
-  /** Length the creator chose; null for rooms without a time limit (sliding expiry). */
-  durationSeconds: number | null;
-  /** The host already changed the time (allowed once). */
-  timeExtended: boolean;
-  /** Time is up: running transfers finish, nothing new can be sent, then the room ends. */
-  wrappingUp: boolean;
   status: RoomStatus;
   signaling: SignalingStatus;
   reconnectAttempts: number;
@@ -196,10 +189,6 @@ export class RoomSession {
       selfId: session.deviceId,
       hostDeviceId: null,
       expiresAt: null,
-      createdAt: null,
-      durationSeconds: null,
-      timeExtended: false,
-      wrappingUp: false,
       status: "connecting",
       signaling: "idle",
       reconnectAttempts: 0,
@@ -326,33 +315,13 @@ export class RoomSession {
     this.applyRoomView(await updateRoomSettings(this.session.roomId, { discoverable }, this.session.token));
   }
 
-  /** Host only, once: the room's new total length in minutes. */
-  async changeTime(durationMinutes: number): Promise<void> {
-    this.applyRoomView(await changeRoomTime(this.session.roomId, durationMinutes, this.session.token));
-  }
-
-  /**
-   * A timed room whose time ran out: transfers already running finish, but nothing new
-   * (files, texts, chat) can be sent. Also true in the seconds before the server says so.
-   */
-  timeUp(now = Date.now()): boolean {
-    const room = this.room.getSnapshot();
-    return room.wrappingUp || (room.durationSeconds !== null && room.expiresAt !== null && room.expiresAt <= now);
-  }
-
-  private refuseWhenTimeUp(): boolean {
-    if (!this.timeUp()) return false;
-    this.notices.emit("notice", { kind: "warning", message: "Time's up for this room. Nothing new can be sent." });
-    return true;
-  }
-
   // --- peer messages -------------------------------------------------------------------------
 
   /** Sends a text (link, note, password…) privately to the chosen devices. */
   async sendText(peerIds: readonly string[], text: string): Promise<number> {
     const trimmed = text.slice(0, MAX_TEXT_MESSAGE);
     if (!trimmed.trim() || peerIds.length === 0) return 0;
-    if (this.refuseWhenTimeUp() || this.refuseEventGuest()) return 0;
+    if (this.refuseEventGuest()) return 0;
     const id = randomId("t");
     const delivered = await this.messenger.broadcast(peerIds, { kind: "text", id, text: trimmed });
     this.pushInbox({ id, kind: "text", direction: "out", peerIds: delivered, text: trimmed, at: Date.now() });
@@ -368,7 +337,7 @@ export class RoomSession {
    */
   async sendChat(text: string, options: ChatSendOptions = {}): Promise<void> {
     const trimmed = text.trim().slice(0, MAX_CHAT_MESSAGE);
-    if (!trimmed || this.refuseWhenTimeUp() || this.refuseEventGuest()) return;
+    if (!trimmed || this.refuseEventGuest()) return;
     const id = randomId("c");
     const peers = this.onlinePeerIds();
     const group = this.room.getSnapshot().devices.length >= CHAT_GROUP_MIN_DEVICES;
@@ -404,7 +373,7 @@ export class RoomSession {
 
   /** Adds or removes this device's reaction on a chat message, for everyone in the room. */
   async reactToChat(messageId: string, emoji: Reaction): Promise<void> {
-    if (this.refuseWhenTimeUp() || this.refuseEventGuest()) return;
+    if (this.refuseEventGuest()) return;
     const message = this.inbox.getSnapshot().find((m) => m.id === messageId && m.kind === "chat");
     if (!message) return;
     const on = !(message.reactions?.[emoji] ?? []).includes(this.session.deviceId);
@@ -419,7 +388,6 @@ export class RoomSession {
 
   /** Reacts to a received file; the sender sees it on their transfer card. */
   async react(transferId: string, emoji: Reaction): Promise<void> {
-    if (this.refuseWhenTimeUp()) return;
     const senderId = this.transfers.markReacted(transferId, emoji);
     if (senderId) await this.messenger.send(senderId, { kind: "reaction", transferId, emoji });
   }
@@ -536,8 +504,8 @@ export class RoomSession {
         kind: room.kind,
         theme: room.theme,
         mode: room.mode,
-        durationSeconds: room.durationSeconds,
-        timeExtended: room.timeExtended,
+        durationSeconds: null,
+        timeExtended: false,
         peakDevices: room.devices.length,
       });
     }
@@ -559,16 +527,11 @@ export class RoomSession {
 
   private applyRoomView(room: RoomView): void {
     if (this.session.mode === "standard") updateRememberedTheme(room.room_id, room.theme);
-    const before = this.room.getSnapshot();
     this.patch({
       roomCode: room.room_code,
       joinUrl: room.join_url,
       hostDeviceId: room.host_device_id,
       expiresAt: Date.parse(room.expires_at) || null,
-      createdAt: Date.parse(room.created_at) || null,
-      durationSeconds: room.duration_seconds ?? null,
-      timeExtended: room.time_extended ?? false,
-      wrappingUp: room.wrapping_up ?? false,
       devices: room.devices,
       kind: room.kind ?? "standard",
       maxDevices: room.max_devices,
@@ -576,20 +539,9 @@ export class RoomSession {
       theme: room.theme ?? "default",
     });
     const after = this.room.getSnapshot();
-    if (after.wrappingUp && !before.wrappingUp) {
-      this.notices.emit("notice", {
-        kind: "warning",
-        message: "Time's up. Files already on their way will finish, then the room closes.",
-      });
-    }
-    if (after.timeExtended && !before.timeExtended && before.durationSeconds !== null && after.durationSeconds !== null) {
-      this.notices.emit("notice", { kind: "info", message: `The room now lasts ${Math.round(after.durationSeconds / 60)} minutes.` });
-    }
     if (this.wasLive) {
       updateRoomHistory(after.roomId, (entry) => ({
         theme: after.theme,
-        durationSeconds: after.durationSeconds,
-        timeExtended: after.timeExtended,
         host: entry.host || after.hostDeviceId === after.selfId,
         peakDevices: Math.max(entry.peakDevices, after.devices.length),
       }));
